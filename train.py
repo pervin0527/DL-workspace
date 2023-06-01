@@ -4,7 +4,7 @@ import torchvision.transforms as transforms
 
 from torch import nn 
 from tqdm import tqdm
-from vgg import VGG
+from model import VGG
 from load_data import CustomDataset
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter

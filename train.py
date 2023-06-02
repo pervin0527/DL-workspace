@@ -10,12 +10,12 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from preprocessing import get_mean_rgb, get_std_rgb, ScaleJitterTransform, data_visualize
 
-def load_torch_weight(pretrained_model_name, train_model_name):   
-    if train_model_name == "vgg11":
+def load_torch_weight(train_model_name, pretrained_model_name):   
+    if pretrained_model_name == "vgg11":
         pretrained_model = models.vgg11(weights="IMAGENET1K_V1").to(device)
-    elif train_model_name == "vgg13":
+    elif pretrained_model_name == "vgg13":
         pretrained_model = models.vgg13(weights="IMAGENET1K_V1").to(device)
-    elif train_model_name == "vgg16":
+    elif pretrained_model_name == "vgg16":
         pretrained_model = models.vgg16(weights="IMAGENET1K_V1").to(device)
     else:
         pretrained_model = models.vgg19(weights="IMAGENET1K_V1").to(device)
@@ -26,6 +26,9 @@ def load_torch_weight(pretrained_model_name, train_model_name):
         param.requires_grad = False
         
     train_model = VGG(model_name=train_model_name, num_classes=len(classes), init_weights=True).to(device)
+    print(f"{pretrained_model_name} \n {pretrained_model}")
+    print(f"{train_model_name} \n {train_model}")
+
     pretrained_model_layers = dict(pretrained_model.named_modules())
     train_model_layers = dict(train_model.named_modules())
 
@@ -36,6 +39,7 @@ def load_torch_weight(pretrained_model_name, train_model_name):
                           "vgg19" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"]}
     
     for train_layer_name, pretrained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[pretrained_model_name]):
+        # print(train_layer_name, pretrained_layer_name)
         train_model_layers[train_layer_name].weight.data.copy_(pretrained_model_layers[pretrained_layer_name].weight.data)
         train_model_layers[train_layer_name].bias.data.copy_(pretrained_model_layers[pretrained_layer_name].bias.data)
 
@@ -182,7 +186,7 @@ def train(dataloader, model, loss_fn, optimizer):
 
     writer.close()
     torch.save(model.state_dict(), save_path)
-    print(f"{train_model}_{dataset_name} is saved {save_path}")
+    print(f"{train_model}_{dataset_name}_torch_weight is saved {save_path}")
 
 
 if __name__ == "__main__":
@@ -190,8 +194,8 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
-    train_model = "vgg11"
     pretrain_model = "vgg11"
+    train_model = "vgg13"
     use_pretrained = False
     use_torch_weight = True
 

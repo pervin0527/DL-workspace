@@ -186,7 +186,7 @@ def train(dataloader, model, loss_fn, optimizer):
 
     writer.close()
     torch.save(model.state_dict(), save_path)
-    print(f"{train_model}_{dataset_name}_torch_weight is saved {save_path}")
+    print(f"train finished. pth file saved at {save_path}")
 
 
 if __name__ == "__main__":
@@ -194,10 +194,10 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
-    pretrain_model = "vgg11"
     train_model = "vgg13"
+    pretrain_model = "vgg11"
     use_pretrained = False
-    use_torch_weight = True
+    use_torch_weight = False
 
     epochs = 1000
     batch_size = 128
@@ -213,9 +213,16 @@ if __name__ == "__main__":
     root = "/home/pervinco"
     dataset_name = "sports"
     dataset_path = f"{root}/Datasets/{dataset_name}"
-    save_path = f"{root}/Models/VGG/{train_model}_{dataset_name}.pth"
-    load_path = f"{root}/Models/VGG/{pretrain_model}_{dataset_name}.pth"
-    log_path = f"{root}/Models/VGG/{train_model}_{dataset_name}"
+    load_path = f"{root}/Models/VGG/vgg11_sports.pth"
+
+    pth_name = f"{train_model}_{dataset_name}"
+    if use_pretrained:
+        pth_name = f"{pth_name}_pret_{pretrain_model}"
+    elif use_torch_weight:
+        pth_name = f"{pth_name}_tw_{pretrain_model}"
+
+    save_path = f"{root}/Models/VGG/{pth_name}.pth"
+    log_path = f"{root}/Models/VGG/{pth_name}"
 
     ## Dataset Processing
     if calc_mean:

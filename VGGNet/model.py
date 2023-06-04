@@ -33,19 +33,6 @@ class VGG(nn.Module):
 
         return x
     
-    def initialize_weights(self):
-        for m in self.modules(): ## self.modules : 정의된 layer들을 담고 있다.
-            if isinstance(m, nn.Conv2d): ## 해당 항목이 torch.nn.Conv2d와 동일한 클래스인가?
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu') ## he normal init
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0) ## bias를 0으로 초기화한다.
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
-
     def feature_extractor(self, block_info, batch_norm=False):
         layers = []
         in_channels = 3
@@ -62,3 +49,16 @@ class VGG(nn.Module):
                 in_channels = v
 
         return nn.Sequential(*layers)
+    
+    def initialize_weights(self):
+        for m in self.modules(): ## self.modules : 정의된 layer들을 담고 있다.
+            if isinstance(m, nn.Conv2d): ## 해당 항목이 torch.nn.Conv2d와 동일한 클래스인가?
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu') ## he normal init
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0) ## bias를 0으로 초기화한다.
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)

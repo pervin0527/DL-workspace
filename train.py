@@ -194,10 +194,10 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
-    train_model = "vgg13"
+    train_model = "vgg16"
     pretrain_model = "vgg11"
     use_pretrained = False
-    use_torch_weight = False
+    use_torch_weight = True
 
     epochs = 1000
     batch_size = 128

@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 
 from tqdm import tqdm
 from torch import nn
-from model import PlainNet
+from model import resnet18, resnet34, resnet50, resnet101, resnet152
 from dataloader import CustomDataset
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -31,7 +31,7 @@ def valid(dataloader, model, loss_fn):
 
 
 def train(dataloader, model, loss_fn, optimizer):
-    global lr_patience, early_stop_patience
+    global LR_PATIENCE, EARLY_STOP_PATIENCE
     best_loss = 0
     writer = SummaryWriter(log_dir=LOG_PATH)
 
@@ -89,20 +89,20 @@ def train(dataloader, model, loss_fn, optimizer):
             if valid_loss <= best_loss:
                 print(f"Valid loss decreased. The minimum valid loss updated {best_loss:.4f} to {valid_loss:.4f}.")
                 best_loss = valid_loss
-                lr_patience = 10
+                LR_PATIENCE = 10
             else:
-                lr_patience -= 1
-                print(f"Valid loss did not decrease. patience : {lr_patience} | best : {best_loss:.4f} | current : {valid_loss:.4f}")
+                LR_PATIENCE -= 1
+                print(f"Valid loss did not decrease. patience : {LR_PATIENCE} | best : {best_loss:.4f} | current : {valid_loss:.4f}")
 
-                if lr_patience == 0:
-                    lr_patience = 10
-                    early_stop_patience -= 1
+                if LR_PATIENCE == 0:
+                    LR_PATIENCE = 10
+                    EARLY_STOP_PATIENCE -= 1
                     new_lr = optimizer.param_groups[0]["lr"] * 0.1
 
-                    print(f"Early Stop patience : {early_stop_patience}, learning rate changed {new_lr * 10} to {new_lr}")
+                    print(f"Early Stop patience : {EARLY_STOP_PATIENCE}, learning rate changed {new_lr * 10} to {new_lr}")
                     optimizer.param_groups[0]['lr'] = new_lr
 
-                if early_stop_patience == 0:
+                if EARLY_STOP_PATIENCE == 0:
                     print("Early stopping patience is 0. Train stopped.")
                     break
 
@@ -111,18 +111,31 @@ def train(dataloader, model, loss_fn, optimizer):
     print(f"train finished. pth file saved at {SAVE_PATH}")
 
 
+def build_model(num_classes, model_name):
+    if model_name.lower() == "resnet18":
+        return resnet18(num_classes=num_classes).to(device)
+    elif model_name.lower() == "resnet34":
+        return resnet34(num_classes=num_classes).to(device)
+    elif model_name.lower() == "resnet50":
+        return resnet50(num_classes=num_classes).to(device)
+    else:
+        return resnet101(num_classes=num_classes).to(device)
+    
+
 if __name__ == "__main__":
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"Using {device}")
 
     ## Hyper-parameters
-    TRAIN_MODEL_NAME = "PlainNet34"
+    TRAIN_MODEL_NAME = "ResNet18"
     EPOCHS = 1000
     IMG_SIZE = 224
-    BATCH_SIZE = 256
-    LEARNING_RATE = 0.1
+    BATCH_SIZE = 64
+    LEARNING_RATE = 1e-1
     WEIGHT_DECAY = 0.0001
     MOMENTUM = 0.9
+    LR_PATIENCE = 10
+    EARLY_STOP_PATIENCE = 5
 
     ## Dir
     ROOT = "/home/pervinco"
@@ -141,21 +154,21 @@ if __name__ == "__main__":
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.Resize(size=(IMG_SIZE, IMG_SIZE), antialias=False),
         transforms.ColorJitter(brightness=0, contrast=0, saturation=0, hue=(-0.5, 0.5)),
-        transforms.Normalize(mean=mean, std=std),
+        transforms.Normalize(mean=[mean, mean, mean], std=[std, std, std]),
     ])
 
     ## Dataloader
     train_dataset = CustomDataset(DATASET_PATH, "train", train_transform)
     valid_dataset = CustomDataset(DATASET_PATH, "valid", train_transform)
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=32)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=int(BATCH_SIZE // 4))
 
     print(f"Total train data : {len(train_dataloader.dataset)}, step numbers : {len(train_dataloader)}")
     print(f"Total test data : {len(valid_dataloader.dataset)}, step numbers : {len(valid_dataloader)} \n")
 
     ## Build Model
     classes = train_dataset.get_classes()
-    model = PlainNet(len(classes), init_weights=True)
+    model = build_model(len(classes), TRAIN_MODEL_NAME)
     print(f"{TRAIN_MODEL_NAME} \n {model}")
 
     ## Loss func & Optimizer

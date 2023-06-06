@@ -147,14 +147,16 @@ if __name__ == "__main__":
     LOG_PATH = f"{ROOT}/Models/ResNet/{PTH_NAME}"
 
     ## Data Processing
-    mean, std = get_mean_std(f"{DATASET_PATH}/train")
+    # mean, std = get_mean_std(f"{DATASET_PATH}/train")
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
     train_transform = transforms.Compose([
         ScaleJitter(min_size=256, max_size=480, crop_size=(224, 224), p=0.5),
         transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.Resize(size=(IMG_SIZE, IMG_SIZE), antialias=False),
         transforms.ColorJitter(brightness=0, contrast=0, saturation=0, hue=(-0.5, 0.5)),
-        transforms.Normalize(mean=[mean, mean, mean], std=[std, std, std]),
+        transforms.Normalize(mean=mean, std=std),
     ])
 
     ## Dataloader

@@ -54,6 +54,13 @@ class PlainNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512, num_classes)
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def make_block(self, out_channel, num_layers, stride=1):
         downsample = None
         if stride != 1 or self.in_channel != out_channel:
@@ -249,6 +256,10 @@ def resnet152(num_classes):
 
 def plainnet18(num_classes):
     model = PlainNet(layers=[2, 2, 2, 2], num_classes=num_classes)
+    return model
+
+def plainnet34(num_classes):
+    model = PlainNet(layers=[3, 4, 6, 3], num_classes=num_classes)
     return model
 
     

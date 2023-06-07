@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 
 from tqdm import tqdm
 from torch import nn
-from model import resnet18, resnet34, resnet50, resnet101, plainnet18
+from model import resnet18, resnet34, resnet50, resnet101, plainnet18, plainnet34
 from dataloader import CustomDataset
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -124,6 +124,8 @@ def build_model(num_classes, model_name):
     
     elif model_name.lower() == "plainnet18":
         return plainnet18(num_classes=num_classes).to(device)
+    elif model_name.lower() == "plainnet34":
+        return plainnet34(num_classes=num_classes).to(device)
     
     
 if __name__ == "__main__":
@@ -131,7 +133,7 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
-    TRAIN_MODEL_NAME = "PlainNet18"
+    TRAIN_MODEL_NAME = "ResNet50"
     EPOCHS = 1000
     IMG_SIZE = 224
     BATCH_SIZE = 64
@@ -151,8 +153,10 @@ if __name__ == "__main__":
     LOG_PATH = f"{ROOT}/Models/ResNet/{PTH_NAME}"
 
     ## Data Processing
-    # mean, std = get_mean_std(f"{DATASET_PATH}/train")
-    mean = (0.485, 0.456, 0.406)
+    mean, std = get_mean_std(f"{DATASET_PATH}/train")
+    print(mean, std)
+    
+    # mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)
     train_transform = transforms.Compose([
         ScaleJitter(min_size=256, max_size=480, crop_size=(224, 224), p=0.5),

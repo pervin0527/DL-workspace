@@ -36,28 +36,40 @@ class ScaleJitter(object):
 
 
 def get_mean_std(train_ds_path):
-    train_image_files = sorted(glob(f"{train_ds_path}/*/*.jpg"))
-    
     total_pixels = 0
-    total_pixel_values = 0
-    total_std_values = 0
+    sum_pixels = np.zeros(shape=[3], dtype=np.float32)
+    sum_diffs = np.zeros(shape=[3], dtype=np.float32)
+
+    train_image_files = sorted(glob(f"{train_ds_path}/*/*.jpg"))
+    ## mean per pixels
     for idx in tqdm(range(len(train_image_files))):
         image = cv2.imread(train_image_files[idx])
         image = cv2.resize(image, (224, 224))
-        image = image.astype(np.float32)
+        image = image.astype(np.float32) / 255.0
+
+        sum_pixels[0] += np.sum(image[:, :, 0]) ## Blue
+        sum_pixels[1] += np.sum(image[:, :, 1]) ## Green
+        sum_pixels[2] += np.sum(image[:, :, 2]) ## Red
 
         height, width, channels = image.shape
         total_pixels += (height * width * channels)
-        total_pixel_values += np.sum(image)
 
-    mean_per_pixels = total_pixel_values / total_pixels
+    mean_per_pixels = sum_pixels / total_pixels
 
+    ## std per pixles
     for idx in tqdm(range(len(train_image_files))):
         image = cv2.imread(train_image_files[idx])
         image = cv2.resize(image, (224, 224))
-        total_std_values += np.sum((image - mean_per_pixels) ** 2)
+        image = image.astype(np.float32) / 255.0
 
-    std_per_pixels = np.sqrt(total_std_values / total_pixels)
+        sum_diffs[0] += np.sum((image[:, :, 0] - mean_per_pixels[0]) ** 2)
+        sum_diffs[1] += np.sum((image[:, :, 1] - mean_per_pixels[1]) ** 2)
+        sum_diffs[2] += np.sum((image[:, :, 2] - mean_per_pixels[2]) ** 2)
+
+    std_per_pixels = np.sqrt(sum_diffs / total_pixels)
+
+    mean_per_pixels = np.full(3, np.sum(mean_per_pixels))
+    std_per_pixels = np.full(3, np.sum(std_per_pixels))
 
     return mean_per_pixels, std_per_pixels
 

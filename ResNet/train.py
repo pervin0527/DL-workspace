@@ -3,11 +3,12 @@ import torchvision.transforms as transforms
 
 from tqdm import tqdm
 from torch import nn
-from model import resnet18, resnet34, resnet50, resnet101, resnet152
+from model import resnet18, resnet34, resnet50, resnet101, plainnet18
 from dataloader import CustomDataset
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from preprocessing import get_mean_std, ScaleJitter
+
 
 def valid(dataloader, model, loss_fn):
     model.eval()
@@ -118,16 +119,19 @@ def build_model(num_classes, model_name):
         return resnet34(num_classes=num_classes).to(device)
     elif model_name.lower() == "resnet50":
         return resnet50(num_classes=num_classes).to(device)
-    else:
+    elif model_name.lower() == "resnet101":
         return resnet101(num_classes=num_classes).to(device)
     
-
+    elif model_name.lower() == "plainnet18":
+        return plainnet18(num_classes=num_classes).to(device)
+    
+    
 if __name__ == "__main__":
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"Using {device}")
 
     ## Hyper-parameters
-    TRAIN_MODEL_NAME = "ResNet18"
+    TRAIN_MODEL_NAME = "PlainNet18"
     EPOCHS = 1000
     IMG_SIZE = 224
     BATCH_SIZE = 64
@@ -142,7 +146,7 @@ if __name__ == "__main__":
     DATASET_NAME = "sports"
     DATASET_PATH = f"{ROOT}/Datasets/{DATASET_NAME}"
 
-    PTH_NAME = f"{TRAIN_MODEL_NAME}/{DATASET_NAME}"
+    PTH_NAME = f"{TRAIN_MODEL_NAME}_{DATASET_NAME}"
     SAVE_PATH = f"{ROOT}/Models/ResNet/{PTH_NAME}.pth"
     LOG_PATH = f"{ROOT}/Models/ResNet/{PTH_NAME}"
 

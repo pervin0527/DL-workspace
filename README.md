@@ -6,7 +6,6 @@
     apt-get install python3-pip vim git wget
 
     pip3 install torch torchvision torchaudio
-    pip3 install pillow opencv-python albumentations matplotlib pandas seaborn tensorboard tensorboardX pycocotools
 
 ## CNN
 

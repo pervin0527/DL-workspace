@@ -1,0 +1,9 @@
+pillow 
+opencv-python 
+albumentations 
+matplotlib 
+pandas 
+seaborn 
+tensorboard 
+tensorboardX 
+pycocotools

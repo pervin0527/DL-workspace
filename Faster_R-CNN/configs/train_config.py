@@ -2,6 +2,9 @@ class Confing:
     ## data dir
     DATA_PATH = "/home/pervinco/Datasets/COCO"
 
+    ## backbone model
+    BACKBONE = "resnet50"
+
     ## hyper paramters
     BATCH_SIZE = 6
 
@@ -14,3 +17,5 @@ class Confing:
     # anchor parameters
     ANCHOR_SIZE = [64, 128, 256]
     ANCHOR_RATIO = [0.5, 1, 2.0]
+
+train_cfg = Confing()

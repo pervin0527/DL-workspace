@@ -12,8 +12,8 @@ class CocoDataset(Dataset):
         self.set_name = set_name
         self.year = year
         self.transform = transform
-
         self.get_annotation_data()
+        self.num_classes = 0
 
 
     def get_annotation_data(self):

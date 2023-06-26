@@ -1,105 +1,107 @@
+import cv2
 import torch
-import numpy as np
-from skimage import transform as sktsf
-from torchvision import transforms as tvtsf
+import random
+from utils.config import opt
+from skimage import transform as sktrn
+from torchvision import transforms as tvtrn
+from voc_dataset import PascalVoc
 
-from data import util
-from utils.config import cfg
-from data.voc_dataset import VOCBboxDataset
+def preprocessing(image, min_size, max_size):
+    C, H, W =  image.shape
 
-
-def inverse_normalize(img):
-    if cfg.caffe_pretrain:
-        img = img + (np.array([122.7717, 115.9465, 102.9801]).reshape(3, 1, 1))
-        return img[::-1, :, :]
-    # approximate un-normalize for visualize
-    return (img * 0.225 + 0.45).clip(min=0, max=1) * 255
-
-
-def pytorch_normalze(img):
-    """
-    https://github.com/pytorch/vision/issues/223
-    return appr -1~1 RGB
-    """
-    normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    img = normalize(torch.from_numpy(img))
-
-    return img.numpy()
-
-
-def caffe_normalize(img):
-    img = img[[2, 1, 0], :, :]  # RGB-BGR
-    img = img * 255
-    mean = np.array([122.7717, 115.9465, 102.9801]).reshape(3, 1, 1)
-    img = (img - mean).astype(np.float32, copy=True)
-    return img
-
-
-def preprocess(img, min_size=600, max_size=1000):
-    C, H, W = img.shape
     scale1 = min_size / min(H, W)
     scale2 = max_size / max(H, W)
     scale = min(scale1, scale2)
-    img = img / 255.
-    img = sktsf.resize(img, (C, H * scale, W * scale), mode='reflect',anti_aliasing=False)
-    
-    if cfg.caffe_pretrain:
-        normalize = caffe_normalize
-    else:
-        normalize = pytorch_normalze
-    return normalize(img)
 
+    image = image / 255.
+    image = sktrn.resize(image, (C, H * scale, W * scale), mode="reflect", anti_aliasing=False)
+    normalize = tvtrn.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    image = normalize(torch.from_numpy(image))
+
+    return image
 
 class Transform(object):
-
     def __init__(self, min_size=600, max_size=1000):
         self.min_size = min_size
         self.max_size = max_size
 
-    def __call__(self, in_data):
-        img, bbox, label = in_data
-        _, H, W = img.shape
-        img = preprocess(img, self.min_size, self.max_size)
-        _, o_H, o_W = img.shape
+    def __call__(self, data):
+        image, bbox, label = data
+        _, H, W = image.shape
+        
+        image = preprocessing(image, self.min_size, self.max_size)
+        o_C, o_H, o_W = image.shape
         scale = o_H / H
-        bbox = util.resize_bbox(bbox, (H, W), (o_H, o_W))
+        bbox = self.resize_bbox(bbox, (H, W), (o_H, o_W))
 
-        # horizontally flip
-        img, params = util.random_flip(
-            img, x_random=True, return_param=True)
-        bbox = util.flip_bbox(
-            bbox, (o_H, o_W), x_flip=params['x_flip'])
+        image, params = self.random_flip(image, x_random=True, return_param=True)
+        bbox = self.flip_bbox(bbox, (o_H, o_W), x_flip=params['x_flip'])
 
-        return img, bbox, label, scale
+        return image, bbox, label, scale
+    
+    def resize_bbox(self, in_size, out_size):
+        bbox = bbox.copy()
+        x_scale = float(out_size[1]) / in_size[1]
+        y_scale = float(out_size[0]) / in_size[0]
 
+        bbox[:, 0] = y_scale * bbox[:, 0]
+        bbox[:, 2] = y_scale * bbox[:, 2]
+        bbox[:, 1] = x_scale * bbox[:, 1]
+        bbox[:, 3] = x_scale * bbox[:, 3]
 
-class Dataset:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.db = VOCBboxDataset(cfg.voc_data_dir)
-        self.tsf = Transform(cfg.min_size, cfg.max_size)
+        return bbox
+    
+    def flip_bbox(self, bbox, size, y_flip=False, x_flip=False):
+        H, W = size
+        bbox = bbox.copy()
+        if y_flip:
+            y_max = H - bbox[:, 0]
+            y_min = H - bbox[:, 2]
+            bbox[:, 0] = y_min
+            bbox[:, 2] = y_max
+        if x_flip:
+            x_max = W - bbox[:, 1]
+            x_min = W - bbox[:, 3]
+            bbox[:, 1] = x_min
+            bbox[:, 3] = x_max
+        
+        return bbox
+    
+    def random_flip(self, image, y_random=False, x_random=False, return_param=False, copy=False):
+        y_flip, x_flip = False, False
+        if y_random:
+            y_flip = random.choice([True, False])
+        if x_random:
+            x_flip = random.choice([True, False])
+        
+        if y_flip:
+            img = img[:, ::-1, :]
+        if x_flip:
+            img = img[:, :, ::-1]
+
+        if copy:
+            img = img.copy()
+
+        if return_param:
+            return img, {'y_flip':y_flip, 'x_flip':x_flip}
+        else:
+            return img
+
+class TrainDataset:
+    def __init__(self, opt):
+        self.opt = opt
+        self.dataset = PascalVoc(opt.DATA_DIR)
+        self.transform = Transform(opt.min_size, opt.max_size)
 
     def __getitem__(self, idx):
-        ori_img, bbox, label, difficult = self.db.get_example(idx)
+        image, bbox, label, difficult = self.dataset[idx]
+        image, bbox, label, scale = self.transform((image, bbox, label))
 
-        img, bbox, label, scale = self.tsf((ori_img, bbox, label))
-        # TODO: check whose stride is negative to fix this instead copy all
-        # some of the strides of a given numpy array are negative.
-        return img.copy(), bbox.copy(), label.copy(), scale
-
+        return image.copy(), bbox.copy(), label.copy(), scale
+    
     def __len__(self):
-        return len(self.db)
+        return len(self.dataset)
 
-
-class TestDataset:
-    def __init__(self, cfg, split='test', use_difficult=True):
-        self.cfg = cfg
-        self.db = VOCBboxDataset(cfg.voc_data_dir, split=split, use_difficult=use_difficult)
-
-    def __getitem__(self, idx):
-        ori_img, bbox, label, difficult = self.db.get_example(idx)
-        img = preprocess(ori_img)
-        return img, ori_img.shape[1:], bbox, label, difficult
-
-    def __len__(self):
-        return len(self.db)
+if __name__ == "__main__":
+    test = TrainDataset()
+    print(test)

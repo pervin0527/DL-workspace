@@ -1,157 +1,53 @@
-import os
+import cv2
+import numpy as np
 import xml.etree.ElementTree as ET
 
-import numpy as np
-
-from .util import read_image
-
-
-class VOCBboxDataset:
-    """Bounding box dataset for PASCAL `VOC`_.
-
-    .. _`VOC`: http://host.robots.ox.ac.uk/pascal/VOC/voc2012/
-
-    The index corresponds to each image.
-
-    When queried by an index, if :obj:`return_difficult == False`,
-    this dataset returns a corresponding
-    :obj:`img, bbox, label`, a tuple of an image, bounding boxes and labels.
-    This is the default behaviour.
-    If :obj:`return_difficult == True`, this dataset returns corresponding
-    :obj:`img, bbox, label, difficult`. :obj:`difficult` is a boolean array
-    that indicates whether bounding boxes are labeled as difficult or not.
-
-    The bounding boxes are packed into a two dimensional tensor of shape
-    :math:`(R, 4)`, where :math:`R` is the number of bounding boxes in
-    the image. The second axis represents attributes of the bounding box.
-    They are :math:`(y_{min}, x_{min}, y_{max}, x_{max})`, where the
-    four attributes are coordinates of the top left and the bottom right
-    vertices.
-
-    The labels are packed into a one dimensional tensor of shape :math:`(R,)`.
-    :math:`R` is the number of bounding boxes in the image.
-    The class name of the label :math:`l` is :math:`l` th element of
-    :obj:`VOC_BBOX_LABEL_NAMES`.
-
-    The array :obj:`difficult` is a one dimensional boolean array of shape
-    :math:`(R,)`. :math:`R` is the number of bounding boxes in the image.
-    If :obj:`use_difficult` is :obj:`False`, this array is
-    a boolean array with all :obj:`False`.
-
-    The type of the image, the bounding boxes and the labels are as follows.
-
-    * :obj:`img.dtype == numpy.float32`
-    * :obj:`bbox.dtype == numpy.float32`
-    * :obj:`label.dtype == numpy.int32`
-    * :obj:`difficult.dtype == numpy.bool`
-
-    Args:
-        data_dir (string): Path to the root of the training data. 
-            i.e. "/data/image/voc/VOCdevkit/VOC2007/"
-        split ({'train', 'val', 'trainval', 'test'}): Select a split of the
-            dataset. :obj:`test` split is only available for
-            2007 dataset.
-        year ({'2007', '2012'}): Use a dataset prepared for a challenge
-            held in :obj:`year`.
-        use_difficult (bool): If :obj:`True`, use images that are labeled as
-            difficult in the original annotation.
-        return_difficult (bool): If :obj:`True`, this dataset returns
-            a boolean array
-            that indicates whether bounding boxes are labeled as difficult
-            or not. The default value is :obj:`False`.
-
-    """
-
-    def __init__(self, data_dir, split='trainval',
-                 use_difficult=False, return_difficult=False,
-                 ):
-
-        # if split not in ['train', 'trainval', 'val']:
-        #     if not (split == 'test' and year == '2007'):
-        #         warnings.warn(
-        #             'please pick split from \'train\', \'trainval\', \'val\''
-        #             'for 2012 dataset. For 2007 dataset, you can pick \'test\''
-        #             ' in addition to the above mentioned splits.'
-        #         )
-        id_list_file = os.path.join(
-            data_dir, 'ImageSets/Main/{0}.txt'.format(split))
-
-        self.ids = [id_.strip() for id_ in open(id_list_file)]
+class PascalVoc:
+    def __init__(self, data_dir, split="trainval", use_difficult=False):
+        txt_file = f"{data_dir}/ImageSets/Main/{split}.txt"
+        
+        with open(txt_file, "r") as f:
+            contents = f.readlines()
+        
+        self.ids = [x.strip() for x in contents]
         self.data_dir = data_dir
         self.use_difficult = use_difficult
-        self.return_difficult = return_difficult
-        self.label_names = VOC_BBOX_LABEL_NAMES
+        self.classes = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
+                        'bus', 'car', 'cat', 'chair', 'cow', 
+                        'diningtable', 'dog', 'horse', 'motorbike', 'person',
+                        'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
 
     def __len__(self):
         return len(self.ids)
+    
+    def __getitem__(self, idx):
+        id = self.ids[idx]
+        print(id)
+        annotation = ET.parse(f"{self.data_dir}/Annotations/{id}.xml")
 
-    def get_example(self, i):
-        """Returns the i-th example.
-
-        Returns a color image and bounding boxes. The image is in CHW format.
-        The returned image is RGB.
-
-        Args:
-            i (int): The index of the example.
-
-        Returns:
-            tuple of an image and bounding boxes
-
-        """
-        id_ = self.ids[i]
-        anno = ET.parse(
-            os.path.join(self.data_dir, 'Annotations', id_ + '.xml'))
-        bbox = list()
-        label = list()
-        difficult = list()
-        for obj in anno.findall('object'):
-            # when in not using difficult split, and the object is
-            # difficult, skipt it.
-            if not self.use_difficult and int(obj.find('difficult').text) == 1:
+        bboxes, labels, difficult = [], [], []
+        for obj in annotation.findall('object'):
+            if not self.use_difficult and int(obj.find("difficult").text) == 1:
                 continue
+            difficult.append(int(obj.find("difficult").text))
 
-            difficult.append(int(obj.find('difficult').text))
-            bndbox_anno = obj.find('bndbox')
-            # subtract 1 to make pixel indexes 0-based
-            bbox.append([
-                int(bndbox_anno.find(tag).text) - 1
-                for tag in ('ymin', 'xmin', 'ymax', 'xmax')])
-            name = obj.find('name').text.lower().strip()
-            label.append(VOC_BBOX_LABEL_NAMES.index(name))
-        bbox = np.stack(bbox).astype(np.float32)
-        label = np.stack(label).astype(np.int32)
-        # When `use_difficult==False`, all elements in `difficult` are False.
-        difficult = np.array(difficult, dtype=np.bool).astype(np.uint8)  # PyTorch don't support np.bool
+            bndbox = obj.find("bndbox")
+            bboxes.append([int(bndbox.find(tag).text) for tag in ("ymin", "xmin", "ymax", "xmax")])
+            
+            name = obj.find("name").text.lower().strip()
+            labels.append(self.classes.index(name))
 
-        # Load a image
-        img_file = os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')
-        img = read_image(img_file, color=True)
+        bboxes = np.stack(bboxes).astype(np.float32)
+        labels = np.stack(labels).astype(np.int32)
+        difficult = np.array(difficult, dtype=np.bool_).astype(np.uint8)
 
-        # if self.return_difficult:
-        #     return img, bbox, label, difficult
-        return img, bbox, label, difficult
-
-    __getitem__ = get_example
+        image = cv2.imread(f"{self.data_dir}/JPEGImages/{id}.jpg")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = np.transpose(image, (2, 0, 1)) ## (C, H, W)
+        
+        return image, bboxes, labels, difficult
 
 
-VOC_BBOX_LABEL_NAMES = (
-    'aeroplane',
-    'bicycle',
-    'bird',
-    'boat',
-    'bottle',
-    'bus',
-    'car',
-    'cat',
-    'chair',
-    'cow',
-    'diningtable',
-    'dog',
-    'horse',
-    'motorbike',
-    'person',
-    'pottedplant',
-    'sheep',
-    'sofa',
-    'train',
-    'tvmonitor')
+if __name__ == "__main__":
+    test = PascalVoc("/home/pervinco/Datasets/PASCAL_VOC/VOCdevkit/VOC2012")
+    print(test[0])

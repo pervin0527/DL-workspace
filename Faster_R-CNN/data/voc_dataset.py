@@ -22,7 +22,6 @@ class PascalVoc:
     
     def __getitem__(self, idx):
         id = self.ids[idx]
-        print(id)
         annotation = ET.parse(f"{self.data_dir}/Annotations/{id}.xml")
 
         bboxes, labels, difficult = [], [], []

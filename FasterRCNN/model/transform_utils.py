@@ -3,8 +3,7 @@ import math
 import torch
 from torch import nn
 from torch.jit.annotations import List, Tuple
-
-from utils.im_utils import ImageList
+from data.data_utils import ImageList
 
 
 def torch_choice(l):
@@ -21,13 +20,6 @@ def max_by_axis(the_list):
 
 
 def batch_images(images, size_divisible=32):
-    """
-    batched images
-    :param images: a set of images
-    :param size_divisible: ratio of height/width to be adjusted
-    :return: batched tensor image
-    """
-
     max_size = max_by_axis([list(img.shape) for img in images])
 
     stride = float(size_divisible)
@@ -35,7 +27,6 @@ def batch_images(images, size_divisible=32):
     max_size[1] = int(math.ceil(float(max_size[1]) / stride) * stride)
     max_size[2] = int(math.ceil(float(max_size[2]) / stride) * stride)
 
-    # [batch, channel, height, width]
     batch_shape = [len(images)] + max_size
 
     batched_imgs = images[0].new_full(batch_shape, 0)
@@ -46,19 +37,6 @@ def batch_images(images, size_divisible=32):
 
 
 class GeneralizedRCNNTransform(nn.Module):
-    """
-    Performs input / target transformation before feeding the data to a GeneralizedRCNN model.
-    The transformations it perform are:
-        - input normalization (mean subtraction and std division)
-        - input / target resizing to match min_size / max_size
-
-    It returns a ImageList for the inputs, and a List[Dict[Tensor]] for the targets
-    :param min_size: minimum size of input image
-    :param max_size: maximum size of input image
-    :param image_mean: image mean
-    :param image_std: image std
-    """
-
     def __init__(self, min_size, max_size, image_mean, image_std):
         super(GeneralizedRCNNTransform, self).__init__()
         if not isinstance(min_size, (list, tuple)):
@@ -75,16 +53,6 @@ class GeneralizedRCNNTransform(nn.Module):
         return (image - mean[:, None, None]) / std[:, None, None]
 
     def resize(self, image, target):
-        """
-        resize input image to specified size and transform for target
-        :param image: input image
-        :param target: target related info, like bbox
-        :return:
-            image: resized image
-            target: resized target
-        """
-
-        # image shape is [channel, height, width]
         h, w = image.shape[-2:]
         im_shape = torch.tensor(image.shape[-2:])
         min_size = float(torch.min(im_shape))
@@ -111,14 +79,6 @@ class GeneralizedRCNNTransform(nn.Module):
         return image, target
 
     def postprocess(self, result, image_shapes, original_image_sizes):
-        """
-        post process of predictions, mainly map bboxed coordinates to original image
-        :param result: predictions result
-        :param image_shapes: image size after preprocess
-        :param original_image_sizes: original image size
-        :return:
-        """
-
         if self.training:
             return result
         for i, (pred, im_s, o_im_s) in enumerate(zip(result, image_shapes, original_image_sizes)):
@@ -142,7 +102,6 @@ class GeneralizedRCNNTransform(nn.Module):
             if targets is not None and target_index is not None:
                 targets[i] = target_index
 
-        # save resized image size
         image_sizes = [img.shape[-2:] for img in images]
         images = batch_images(images)
         image_sizes_list = torch.jit.annotate(List[Tuple[int, int]], [])
@@ -156,13 +115,6 @@ class GeneralizedRCNNTransform(nn.Module):
 
 
 def resize_boxes(boxes, original_size, new_size):
-    """
-    resize bbox to original image based on stride
-    :param boxes: predicted bboxes
-    :param original_size: original image size
-    :param new_size: rescaled image size
-    :return:
-    """
     ratios = [
         torch.tensor(s, dtype=torch.float32, device=boxes.device) /
         torch.tensor(s_orig, dtype=torch.float32, device=boxes.device)

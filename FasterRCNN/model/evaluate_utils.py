@@ -1,7 +1,7 @@
 import time
 import torch
-from utils.train_utils import MetricLogger
-from utils.coco_utils import get_coco_api_from_dataset, CocoEvaluator
+from model.train_utils import MetricLogger
+from data.coco_utils import get_coco_api_from_dataset, CocoEvaluator
 
 
 @torch.no_grad()

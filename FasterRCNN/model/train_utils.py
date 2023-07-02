@@ -1,110 +1,59 @@
-import datetime
-import pickle
 import time
+import torch
+import pickle
+import datetime
+from torchvision import ops
+import torch.distributed as dist
 from collections import defaultdict, deque
 
-import torch.distributed as dist
-from torchvision import ops
+from config import train_cfg
+from model.backbone_utils import VGG
+from model.faster_rcnn import FasterRCNN, FastRCNNPredictor
+from model.anchor_utils import AnchorsGenerator
 
-from backbone.mobilenet import MobileNetV2
-from backbone.resnet50_fpn_model import *
-from config.train_config import cfg
-from utils.anchor_utils import AnchorsGenerator
-from utils.faster_rcnn_utils import FasterRCNN, FastRCNNPredictor
+def get_model(num_classes):
+    backbone_name = train_cfg.backbone_name
+    anchor_scales = tuple((f,) for f in train_cfg.anchor_scale)
+    aspect_ratios = tuple((f,) for f in train_cfg.aspect_ratio) * len(anchor_scales)
+    anchor_generator = AnchorsGenerator(anchor_scales=anchor_scales, aspect_ratios=aspect_ratios)
 
 
-def create_model(num_classes):
-    global backbone, model
-    backbone_network = cfg.backbone
+    if backbone_name == "vgg16":
+        backbone = VGG(backbone_name).features
+        backbone.out_channels = 512
 
-    anchor_sizes = tuple((f,) for f in cfg.anchor_size)
-    aspect_ratios = tuple((f,) for f in cfg.anchor_ratio) * len(anchor_sizes)
-    anchor_generator = AnchorsGenerator(sizes=anchor_sizes,
-                                        aspect_ratios=aspect_ratios)
 
-    if backbone_network == 'mobilenet':
-        backbone = MobileNetV2(weights_path=cfg.backbone_pretrained_weights).features
-        backbone.out_channels = 1280
+    roi_pooler = ops.MultiScaleRoIAlign(featmap_names=['0'],
+                                        output_size=train_cfg.roi_out_size,
+                                        sampling_ratio=train_cfg.roi_sample_rate)
+    
+    model = FasterRCNN(backbone=backbone, num_classes=num_classes,
+                        min_size=train_cfg.min_size, max_size=train_cfg.max_size,
+                        image_mean=train_cfg.image_mean, image_std=train_cfg.image_std,
+                        rpn_anchor_generator=anchor_generator, box_roi_pool=roi_pooler,
+                        rpn_pre_nms_top_n_train=train_cfg.rpn_pre_nms_top_n_train,
+                        rpn_pre_nms_top_n_test=train_cfg.rpn_pre_nms_top_n_test,
+                        rpn_post_nms_top_n_train=train_cfg.rpn_post_nms_top_n_train,
+                        rpn_post_nms_top_n_test=train_cfg.rpn_post_nms_top_n_test,
+                        rpn_nms_thresh=train_cfg.rpn_nms_thresh,
+                        rpn_fg_iou_thresh=train_cfg.rpn_fg_iou_thresh,
+                        rpn_bg_iou_thresh=train_cfg.rpn_bg_iou_thresh,
+                        rpn_batch_size_per_image=train_cfg.rpn_batch_size_per_image,
+                        rpn_positive_fraction=train_cfg.rpn_positive_fraction,
+                        box_head=None, box_predictor=None,
+                        box_score_thresh=train_cfg.box_score_thresh,
+                        box_nms_thresh=train_cfg.box_nms_thresh,
+                        box_detections_per_img=train_cfg.box_detections_per_img,
+                        box_fg_iou_thresh=train_cfg.box_fg_iou_thresh,
+                        box_bg_iou_thresh=train_cfg.box_bg_iou_thresh,
+                        box_batch_size_per_image=train_cfg.box_batch_size_per_image,
+                        box_positive_fraction=train_cfg.box_positive_fraction,
+                        bbox_reg_weights=train_cfg.bbox_reg_weights)
 
-        roi_pooler = ops.MultiScaleRoIAlign(featmap_names=['0'],  # roi pooling in which resolution feature
-                                            output_size=cfg.roi_out_size,  # roi_pooling output feature size
-                                            sampling_ratio=cfg.roi_sample_rate)  # sampling_ratio
-
-        model = FasterRCNN(backbone=backbone, num_classes=num_classes,
-                           # transform parameters
-                           min_size=cfg.min_size, max_size=cfg.max_size,
-                           image_mean=cfg.image_mean, image_std=cfg.image_std,
-                           # rpn parameters
-                           rpn_anchor_generator=anchor_generator, box_roi_pool=roi_pooler,
-                           rpn_pre_nms_top_n_train=cfg.rpn_pre_nms_top_n_train,
-                           rpn_pre_nms_top_n_test=cfg.rpn_pre_nms_top_n_test,
-                           rpn_post_nms_top_n_train=cfg.rpn_post_nms_top_n_train,
-                           rpn_post_nms_top_n_test=cfg.rpn_post_nms_top_n_test,
-                           rpn_nms_thresh=cfg.rpn_nms_thresh,
-                           rpn_fg_iou_thresh=cfg.rpn_fg_iou_thresh,
-                           rpn_bg_iou_thresh=cfg.rpn_bg_iou_thresh,
-                           rpn_batch_size_per_image=cfg.rpn_batch_size_per_image,
-                           rpn_positive_fraction=cfg.rpn_positive_fraction,
-                           # Box parameters
-                           box_head=None, box_predictor=None,
-
-                           # remove low threshold target
-                           box_score_thresh=cfg.box_score_thresh,
-                           box_nms_thresh=cfg.box_nms_thresh,
-                           box_detections_per_img=cfg.box_detections_per_img,
-                           box_fg_iou_thresh=cfg.box_fg_iou_thresh,
-                           box_bg_iou_thresh=cfg.box_bg_iou_thresh,
-                           box_batch_size_per_image=cfg.box_batch_size_per_image,
-                           box_positive_fraction=cfg.box_positive_fraction,
-                           bbox_reg_weights=cfg.bbox_reg_weights
-                           )
-    elif backbone_network == 'resnet50_fpn':
-        backbone = resnet50_fpn_backbone()
-
-        roi_pooler = ops.MultiScaleRoIAlign(
-            featmap_names=['0', '1', '2', '3'],
-            output_size=cfg.roi_out_size,
-            sampling_ratio=cfg.roi_sample_rate)
-        model = FasterRCNN(backbone=backbone, num_classes=num_classes,
-                           # transform parameters
-                           min_size=cfg.min_size, max_size=cfg.max_size,
-                           image_mean=cfg.image_mean, image_std=cfg.image_std,
-                           # rpn parameters
-                           rpn_anchor_generator=anchor_generator, box_roi_pool=roi_pooler,
-                           rpn_pre_nms_top_n_train=cfg.rpn_pre_nms_top_n_train,
-                           rpn_pre_nms_top_n_test=cfg.rpn_pre_nms_top_n_test,
-                           rpn_post_nms_top_n_train=cfg.rpn_post_nms_top_n_train,
-                           rpn_post_nms_top_n_test=cfg.rpn_post_nms_top_n_test,
-                           rpn_nms_thresh=cfg.rpn_nms_thresh,
-                           rpn_fg_iou_thresh=cfg.rpn_fg_iou_thresh,
-                           rpn_bg_iou_thresh=cfg.rpn_bg_iou_thresh,
-                           rpn_batch_size_per_image=cfg.rpn_batch_size_per_image,
-                           rpn_positive_fraction=cfg.rpn_positive_fraction,
-                           # Box parameters
-                           box_head=None, box_predictor=None,
-
-                           # remove low threshold target
-                           box_score_thresh=cfg.box_score_thresh,
-                           box_nms_thresh=cfg.box_nms_thresh,
-                           box_detections_per_img=cfg.box_detections_per_img,
-                           box_fg_iou_thresh=cfg.box_fg_iou_thresh,
-                           box_bg_iou_thresh=cfg.box_bg_iou_thresh,
-                           box_batch_size_per_image=cfg.box_batch_size_per_image,
-                           box_positive_fraction=cfg.box_positive_fraction,
-                           bbox_reg_weights=cfg.bbox_reg_weights
-                           )
-
-        # weights_dict = torch.load(cfg.pretrained_weights)
-        # missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
-        # if len(missing_keys) != 0 or len(unexpected_keys) != 0:
-        #     print("missing_keys: ", missing_keys)
-        #     print("unexpected_keys: ", unexpected_keys)
-
-        in_features = model.roi_heads.box_predictor.cls_score.in_features
-        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
     return model
-
 
 def warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor):
     def f(x):
@@ -131,21 +80,12 @@ def get_world_size():
 
 
 def reduce_dict(input_dict, average=True):
-    """
-    Args:
-        input_dict (dict): all the values will be reduced
-        average (bool): whether to do average or sum
-    Reduce the values in the dictionary from all processes so that all processes
-    have the averaged results. Returns a dict with the same fields as
-    input_dict, after reduction.
-    """
     world_size = get_world_size()
     if world_size < 2:
         return input_dict
     with torch.no_grad():
         names = []
         values = []
-        # sort the keys so that they are consistent across processes
         for k in sorted(input_dict.keys()):
             names.append(k)
             values.append(input_dict[k])
@@ -159,14 +99,10 @@ def reduce_dict(input_dict, average=True):
 
 
 class SmoothedValue(object):
-    """Track a series of values and provide access to smoothed values over a
-    window or the global series average.
-    """
-
     def __init__(self, window_size=20, fmt=None):
         if fmt is None:
             fmt = "{median:.4f} ({global_avg:.4f})"
-        self.deque = deque(maxlen=window_size)  # deque简单理解成加强版list
+        self.deque = deque(maxlen=window_size)
         self.total = 0.0
         self.count = 0
         self.fmt = fmt
@@ -177,10 +113,8 @@ class SmoothedValue(object):
         self.total += value * n
 
     def synchronize_between_processes(self):
-        """
-        Warning: does not synchronize the deque!
-        """
         t = torch.tensor([self.count, self.total], dtype=torch.float64, device="cuda")
+        dist.init_process_group(backend='nccl')
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
@@ -219,32 +153,20 @@ class SmoothedValue(object):
 
 
 def all_gather(data):
-    """
-    Run all_gather on arbitrary picklable data (not necessarily tensors)
-    Args:
-        data: any picklable object
-    Returns:
-        list[data]: list of data gathered from each rank
-    """
     world_size = get_world_size()
     if world_size == 1:
         return [data]
 
-    # serialized to a Tensor
     buffer = pickle.dumps(data)
     storage = torch.ByteStorage.from_buffer(buffer)
     tensor = torch.ByteTensor(storage).to("cuda")
 
-    # obtain Tensor size of each rank
     local_size = torch.tensor([tensor.numel()], device="cuda")
     size_list = [torch.tensor([0], device="cuda") for _ in range(world_size)]
     dist.all_gather(size_list, local_size)
     size_list = [int(size.item()) for size in size_list]
     max_size = max(size_list)
 
-    # receiving Tensor from all ranks
-    # we pad the tensor because torch all_gather does not support
-    # gathering tensors of different shapes
     tensor_list = []
     for _ in size_list:
         tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))

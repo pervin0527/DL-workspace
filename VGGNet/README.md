@@ -1,1 +1,3 @@
-# VGG-pytorch
+# VGG
+
+Paper Review [Blog](https://pervin0527.notion.site/VGGNet-VERY-DEEP-CONVOLUTIONAL-NETWORKS-FOR-LARGE-SCALE-IMAGE-RECOGNITION-8e88e520424248b4bc6cba2aad72246b?pvs=4)

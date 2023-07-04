@@ -43,8 +43,6 @@ class DetectionDataset(Dataset):
                 self.set_name = "val"    
 
             self.txt_path = f"{data_dir}/ImageSets/Main/{self.set_name}.txt"
-            print(self.txt_path)    
-
             with open(self.txt_path, "r") as f:
                 self.file_list = [x.strip() for x in f.readlines()]
 
@@ -56,41 +54,46 @@ class DetectionDataset(Dataset):
         self.classes = sorted(self.classes)
 
 
+    def __len__(self):
+        return len(self.dataset)
+
+
     def __getitem__(self, index):
         data = self.dataset[index]
         file_name = data["file_name"]
 
         image = data["image"]
         targets = data["targets"]
-        print(targets)
 
-        # labels = [self.classes.index(x[0]) for x in targets]
+        for i in range(len(targets)):
+            str_label = targets[i][0]
+            targets[i][0] = self.classes.index(str_label)
 
-        # image = self.transform(image)
-        # channel, height, width = image.shape
-        # image, pad = generate_letter_box_image(image)
-        # _, padded_height, padded_width = image.shape
+        image = self.transform(image)
+        channel, height, width = image.shape
+        image, pad = generate_letter_box_image(image)
+        _, padded_height, padded_width = image.shape
 
-        # bboxes = torch.tensor(targets).reshape(-1, 5)
-        # x1 = width * (bboxes[:, 1] - bboxes[:, 3] / 2)
-        # y1 = height * (bboxes[:, 2] - bboxes[:, 4] / 2)
-        # x2 = width * (bboxes[:, 1] + bboxes[:, 3] / 2)
-        # y2 = height * (bboxes[:, 2] + bboxes[:, 4] / 2)
+        bboxes = torch.tensor(targets).reshape(-1, 5)
+        x1 = width * (bboxes[:, 1] - bboxes[:, 3] / 2)
+        y1 = height * (bboxes[:, 2] - bboxes[:, 4] / 2)
+        x2 = width * (bboxes[:, 1] + bboxes[:, 3] / 2)
+        y2 = height * (bboxes[:, 2] + bboxes[:, 4] / 2)
 
-        # x1 += pad[0]
-        # y1 += pad[2]
-        # x2 += pad[1]
-        # y2 += pad[3]
+        x1 += pad[0]
+        y1 += pad[2]
+        x2 += pad[1]
+        y2 += pad[3]
 
-        # bboxes[:, 1] = ((x1 + x2) / 2) / padded_width
-        # bboxes[:, 2] = ((y1 + y2) / 2) / padded_height
-        # bboxes[:, 3] *= width / padded_width
-        # bboxes[:, 4] *= height / padded_height
+        bboxes[:, 1] = ((x1 + x2) / 2) / padded_width
+        bboxes[:, 2] = ((y1 + y2) / 2) / padded_height
+        bboxes[:, 3] *= width / padded_width
+        bboxes[:, 4] *= height / padded_height
 
-        # targets = torch.zeros((len(bboxes), 6))
-        # targets[:, 1:] = bboxes
+        targets = torch.zeros((len(bboxes), 6))
+        targets[:, 1:] = bboxes
 
-        # return file_name, image, targets
+        return file_name, image, targets
 
 
     def get_dataset(self):

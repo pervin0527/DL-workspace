@@ -4,7 +4,7 @@ from torch import nn
 from utils import build_targets
 
 class YoloV3(nn.Module):
-    def __init__(self, image_size: int, num_classes: int):
+    def __init__(self, image_size, num_classes):
         super(YoloV3, self).__init__()
         anchors = {'scale1': [(10, 13), (16, 30), (33, 23)],
                    'scale2': [(30, 61), (62, 45), (59, 119)],
@@ -32,23 +32,23 @@ class YoloV3(nn.Module):
         loss = 0
         residual_output = {}
 
-        # Darknet-53 forward
         with torch.no_grad():
             for key, module in self.darknet53.items():
                 module_type = key.split('_')[0]
 
                 if module_type == 'conv':
                     x = module(x)
+
                 elif module_type == 'residual':
                     out = module(x)
                     x += out
+                    
                     if key == 'residual_3_8' or key == 'residual_4_8' or key == 'residual_5_4':
                         residual_output[key] = x
 
-        # Yolov3 layer forward
-        conv_block3 = self.conv_block3(residual_output['residual_5_4'])
-        scale3 = self.conv_final3(conv_block3)
-        yolo_output3, layer_loss = self.yolo_layer3(scale3, targets)
+        conv_block3 = self.conv_block3(residual_output['residual_5_4']) ## 8, 8, 1024 feature map을 가져와 (conv, batch-norm, leakyrelu) block에 입력.
+        scale3 = self.conv_final3(conv_block3)                          ## (conv, batch-norm, conv) block의 출력 -> 3 * (4 + 1 + num_classes)
+        yolo_output3, layer_loss = self.yolo_layer3(scale3, targets)    ## loss 계산.
         loss += layer_loss
 
         scale2 = self.upsample2(conv_block3)
@@ -67,43 +67,54 @@ class YoloV3(nn.Module):
 
         yolo_outputs = [yolo_output1, yolo_output2, yolo_output3]
         yolo_outputs = torch.cat(yolo_outputs, 1).detach().cpu()
+
         return yolo_outputs if targets is None else (loss, yolo_outputs)
 
     def make_darknet53(self):
         modules = nn.ModuleDict()
 
-        modules['conv_1'] = self.make_conv(3, 32, kernel_size=3, requires_grad=False)
-        modules['conv_2'] = self.make_conv(32, 64, kernel_size=3, stride=2, requires_grad=False)
-        modules['residual_1_1'] = self.make_residual_block(in_channels=64)
-        modules['conv_3'] = self.make_conv(64, 128, kernel_size=3, stride=2, requires_grad=False)
-        modules['residual_2_1'] = self.make_residual_block(in_channels=128)
-        modules['residual_2_2'] = self.make_residual_block(in_channels=128)
-        modules['conv_4'] = self.make_conv(128, 256, kernel_size=3, stride=2, requires_grad=False)
-        modules['residual_3_1'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_2'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_3'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_4'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_5'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_6'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_7'] = self.make_residual_block(in_channels=256)
-        modules['residual_3_8'] = self.make_residual_block(in_channels=256)
-        modules['conv_5'] = self.make_conv(256, 512, kernel_size=3, stride=2, requires_grad=False)
-        modules['residual_4_1'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_2'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_3'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_4'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_5'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_6'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_7'] = self.make_residual_block(in_channels=512)
-        modules['residual_4_8'] = self.make_residual_block(in_channels=512)
-        modules['conv_6'] = self.make_conv(512, 1024, kernel_size=3, stride=2, requires_grad=False)
-        modules['residual_5_1'] = self.make_residual_block(in_channels=1024)
-        modules['residual_5_2'] = self.make_residual_block(in_channels=1024)
-        modules['residual_5_3'] = self.make_residual_block(in_channels=1024)
-        modules['residual_5_4'] = self.make_residual_block(in_channels=1024)
+        modules['conv_1'] = self.make_conv(3, 32, kernel_size=3, requires_grad=False) ## 256, 256, 32
+        modules['conv_2'] = self.make_conv(32, 64, kernel_size=3, stride=2, requires_grad=False) ## 128, 128, 64
+
+        modules['residual_1_1'] = self.make_residual_block(in_channels=64) ## (128, 128, 32), (128, 128, 64)
+
+        modules['conv_3'] = self.make_conv(64, 128, kernel_size=3, stride=2, requires_grad=False) ## 64, 64, 128
+
+        modules['residual_2_1'] = self.make_residual_block(in_channels=128) ## (64, 64, 64), (64, 64, 128)
+        modules['residual_2_2'] = self.make_residual_block(in_channels=128) ## ## (64, 64, 64), (64, 64, 128)
+
+        modules['conv_4'] = self.make_conv(128, 256, kernel_size=3, stride=2, requires_grad=False) ## 32, 32, 256
+
+        modules['residual_3_1'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_2'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_3'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_4'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_5'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_6'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_7'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+        modules['residual_3_8'] = self.make_residual_block(in_channels=256) ## (32, 32, 128), (32, 32, 256)
+
+        modules['conv_5'] = self.make_conv(256, 512, kernel_size=3, stride=2, requires_grad=False) ## 16, 16, 512
+
+        modules['residual_4_1'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_2'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_3'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_4'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_5'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_6'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_7'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+        modules['residual_4_8'] = self.make_residual_block(in_channels=512) ## (16, 16, 256), (16, 16, 512)
+
+        modules['conv_6'] = self.make_conv(512, 1024, kernel_size=3, stride=2, requires_grad=False) ## 8, 8, 1024
+
+        modules['residual_5_1'] = self.make_residual_block(in_channels=1024) ## (8, 8, 512), (8, 8, 1024)
+        modules['residual_5_2'] = self.make_residual_block(in_channels=1024) ## (8, 8, 512), (8, 8, 1024)
+        modules['residual_5_3'] = self.make_residual_block(in_channels=1024) ## (8, 8, 512), (8, 8, 1024)
+        modules['residual_5_4'] = self.make_residual_block(in_channels=1024) ## (8, 8, 512), (8, 8, 1024)
+
         return modules
 
-    def make_conv(self, in_channels: int, out_channels: int, kernel_size: int, stride=1, padding=1, requires_grad=True):
+    def make_conv(self, in_channels, out_channels, kernel_size, stride=1, padding=1, requires_grad=True):
         module1 = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         module2 = nn.BatchNorm2d(out_channels, momentum=0.9, eps=1e-5)
         if not requires_grad:
@@ -113,39 +124,32 @@ class YoloV3(nn.Module):
                 param.requires_grad_(False)
 
         modules = nn.Sequential(module1, module2, nn.LeakyReLU(negative_slope=0.1))
+
         return modules
 
-    def make_conv_block(self, in_channels: int, out_channels: int):
+    def make_conv_block(self, in_channels, out_channels):
         double_channels = out_channels * 2
-        modules = nn.Sequential(
-            self.make_conv(in_channels, out_channels, kernel_size=1, padding=0),
-            self.make_conv(out_channels, double_channels, kernel_size=3),
-            self.make_conv(double_channels, out_channels, kernel_size=1, padding=0),
-            self.make_conv(out_channels, double_channels, kernel_size=3),
-            self.make_conv(double_channels, out_channels, kernel_size=1, padding=0)
-        )
+        modules = nn.Sequential(self.make_conv(in_channels, out_channels, kernel_size=1, padding=0),
+                                self.make_conv(out_channels, double_channels, kernel_size=3),
+                                self.make_conv(double_channels, out_channels, kernel_size=1, padding=0),
+                                self.make_conv(out_channels, double_channels, kernel_size=3),
+                                self.make_conv(double_channels, out_channels, kernel_size=1, padding=0))
         return modules
 
-    def make_conv_final(self, in_channels: int, out_channels: int):
-        modules = nn.Sequential(
-            self.make_conv(in_channels, in_channels * 2, kernel_size=3),
-            nn.Conv2d(in_channels * 2, out_channels, kernel_size=1, stride=1, padding=0, bias=True)
-        )
+    def make_conv_final(self, in_channels, out_channels):
+        modules = nn.Sequential(self.make_conv(in_channels, in_channels * 2, kernel_size=3),
+                                nn.Conv2d(in_channels * 2, out_channels, kernel_size=1, stride=1, padding=0, bias=True))
         return modules
 
-    def make_residual_block(self, in_channels: int):
+    def make_residual_block(self, in_channels):
         half_channels = in_channels // 2
-        block = nn.Sequential(
-            self.make_conv(in_channels, half_channels, kernel_size=1, padding=0, requires_grad=False),
-            self.make_conv(half_channels, in_channels, kernel_size=3, requires_grad=False)
-        )
+        block = nn.Sequential(self.make_conv(in_channels, half_channels, kernel_size=1, padding=0, requires_grad=False),
+                              self.make_conv(half_channels, in_channels, kernel_size=3, requires_grad=False))
         return block
 
-    def make_upsample(self, in_channels: int, out_channels: int, scale_factor: int):
-        modules = nn.Sequential(
-            self.make_conv(in_channels, out_channels, kernel_size=1, padding=0),
-            nn.Upsample(scale_factor=scale_factor, mode='nearest')
-        )
+    def make_upsample(self, in_channels, out_channels, scale_factor):
+        modules = nn.Sequential(self.make_conv(in_channels, out_channels, kernel_size=1, padding=0),
+                                nn.Upsample(scale_factor=scale_factor, mode='nearest'))
         return modules
 
     # Load original weights file
@@ -205,7 +209,7 @@ class YoloV3(nn.Module):
             ptr = self.load_conv_weights(self.conv_final1[1], weights, ptr)
 
     # Load BN bias, weights, running mean and running variance
-    def load_bn_weights(self, bn_layer, weights, ptr: int):
+    def load_bn_weights(self, bn_layer, weights, ptr):
         num_bn_biases = bn_layer.bias.numel()
 
         # Bias
@@ -228,7 +232,7 @@ class YoloV3(nn.Module):
         return ptr
 
     # Load convolution bias
-    def load_conv_bias(self, conv_layer, weights, ptr: int):
+    def load_conv_bias(self, conv_layer, weights, ptr):
         num_biases = conv_layer.bias.numel()
 
         conv_biases = torch.from_numpy(weights[ptr: ptr + num_biases]).view_as(conv_layer.bias)
@@ -238,7 +242,7 @@ class YoloV3(nn.Module):
         return ptr
 
     # Load convolution weights
-    def load_conv_weights(self, conv_layer, weights, ptr: int):
+    def load_conv_weights(self, conv_layer, weights, ptr):
         num_weights = conv_layer.weight.numel()
 
         conv_weights = torch.from_numpy(weights[ptr: ptr + num_weights])
@@ -248,50 +252,41 @@ class YoloV3(nn.Module):
 
         return ptr
 
-    
 
 class YOLODetection(nn.Module):
-    def __init__(self, anchors, image_size: int, num_classes: int):
+    def __init__(self, anchors, image_size, num_classes):
         super(YOLODetection, self).__init__()
         self.anchors = anchors
-        self.num_anchors = len(anchors)
+        self.num_anchors = len(anchors) ## 9개 scale 중 3개
         self.num_classes = num_classes
         self.image_size = image_size
         self.mse_loss = nn.MSELoss()
         self.bce_loss = nn.BCELoss()
-        self.ignore_thres = 0.5
-        self.obj_scale = 1
-        self.no_obj_scale = 100
+        self.ignore_thres = 0.5 ## 이 값보다 작으면 학습에 반영하지 않는다.
+        self.obj_scale, self.no_obj_scale = 1, 100 ## 객체 및 비객체 관련 손실에 대한 가중치
         self.metrics = {}
 
     def forward(self, x, targets):
+        ## x : 3 * (4 + 1 + num_classes)
         device = torch.device('cuda' if x.is_cuda else 'cpu')
+        num_batches, grid_size = x.size(0), x.size(2)
 
-        num_batches = x.size(0)
-        grid_size = x.size(2)
-
-        # 출력값 형태 변환
-        prediction = (
-            x.view(num_batches, self.num_anchors, self.num_classes + 5, grid_size, grid_size)
-                .permute(0, 1, 3, 4, 2).contiguous()
-        )
+        ## 출력값 형태 변환
+        prediction = (x.view(num_batches, self.num_anchors, self.num_classes + 5, grid_size, grid_size).permute(0, 1, 3, 4, 2).contiguous()) ## N, 3, grid_size, grid_size, classes + 5
 
         # Get outputs
-        cx = torch.sigmoid(prediction[..., 0])  # Center x
-        cy = torch.sigmoid(prediction[..., 1])  # Center y
-        w = prediction[..., 2]  # Width
-        h = prediction[..., 3]  # Height
-        pred_conf = torch.sigmoid(prediction[..., 4])  # Object confidence (objectness)
-        pred_cls = torch.sigmoid(prediction[..., 5:])  # Class prediction
+        cx = torch.sigmoid(prediction[..., 0])  ## Center x
+        cy = torch.sigmoid(prediction[..., 1])  ## Center y
+        w = prediction[..., 2]                  ## Width
+        h = prediction[..., 3]                  ## Height
+        pred_conf = torch.sigmoid(prediction[..., 4])  ## Object confidence (objectness)
+        pred_cls = torch.sigmoid(prediction[..., 5:])  ## Class prediction
 
         # Calculate offsets for each grid
         stride = self.image_size / grid_size
-        grid_x = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).view(
-            [1, 1, grid_size, grid_size])
-        grid_y = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).t().view(
-            [1, 1, grid_size, grid_size])
-        scaled_anchors = torch.as_tensor([(a_w / stride, a_h / stride) for a_w, a_h in self.anchors],
-                                         dtype=torch.float, device=device)
+        grid_x = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).view([1, 1, grid_size, grid_size])
+        grid_y = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).t().view([1, 1, grid_size, grid_size])
+        scaled_anchors = torch.as_tensor([(a_w / stride, a_h / stride) for a_w, a_h in self.anchors], dtype=torch.float, device=device)
         anchor_w = scaled_anchors[:, 0:1].view((1, self.num_anchors, 1, 1))
         anchor_h = scaled_anchors[:, 1:2].view((1, self.num_anchors, 1, 1))
 
@@ -360,7 +355,7 @@ class YOLODetection(nn.Module):
         }
 
         return output, loss_layer
-
-
+    
 if __name__ == "__main__":
-    model = YoloV3(416, 20)
+    darknet53 = YoloV3(256, 20).darknet53()
+    print(darknet53)

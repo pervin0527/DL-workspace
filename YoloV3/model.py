@@ -267,39 +267,37 @@ class YOLODetection(nn.Module):
         self.metrics = {}
 
     def forward(self, x, targets):
-        ## x : 3 * (4 + 1 + num_classes)
         device = torch.device('cuda' if x.is_cuda else 'cpu')
+        ## x shape : N, P, grid size, grid size (P = 3 * (4 + 1 + classes))
         num_batches, grid_size = x.size(0), x.size(2)
 
-        ## 출력값 형태 변환
-        prediction = (x.view(num_batches, self.num_anchors, self.num_classes + 5, grid_size, grid_size).permute(0, 1, 3, 4, 2).contiguous()) ## N, 3, grid_size, grid_size, classes + 5
+        ## 3개의 anchor
+        ## N, 3, C + 5, grid size, grid size
+        prediction = (x.view(num_batches, self.num_anchors, self.num_classes + 5, grid_size, grid_size).permute(0, 1, 3, 4, 2).contiguous())
 
-        # Get outputs
-        cx = torch.sigmoid(prediction[..., 0])  ## Center x
-        cy = torch.sigmoid(prediction[..., 1])  ## Center y
-        w = prediction[..., 2]                  ## Width
-        h = prediction[..., 3]                  ## Height
+        ## model에서 예측한 bbox [tx, ty, tw, th]. offset이기 때문에 anchor box과 추가 연산 필요.
+        cx = torch.sigmoid(prediction[..., 0])         ## Center x (grid cell 한 칸의 중심점)
+        cy = torch.sigmoid(prediction[..., 1])         ## Center y (grid cell 한 칸의 중심점)
+        w = prediction[..., 2]                         ## Width
+        h = prediction[..., 3]                         ## Height
         pred_conf = torch.sigmoid(prediction[..., 4])  ## Object confidence (objectness)
         pred_cls = torch.sigmoid(prediction[..., 5:])  ## Class prediction
 
-        # Calculate offsets for each grid
+        ## feature map 상에서의 anchor 반영.
         stride = self.image_size / grid_size
-        grid_x = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).view([1, 1, grid_size, grid_size])
+        grid_x = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).view([1, 1, grid_size, grid_size])      ## 1, 1, grid_size, grid_size. 각 cell의 top-left corner.
         grid_y = torch.arange(grid_size, dtype=torch.float, device=device).repeat(grid_size, 1).t().view([1, 1, grid_size, grid_size])
-        scaled_anchors = torch.as_tensor([(a_w / stride, a_h / stride) for a_w, a_h in self.anchors], dtype=torch.float, device=device)
+        scaled_anchors = torch.as_tensor([(a_w / stride, a_h / stride) for a_w, a_h in self.anchors], dtype=torch.float, device=device) ## 3개의 anchor box를 stride 값으로 나눔.
         anchor_w = scaled_anchors[:, 0:1].view((1, self.num_anchors, 1, 1))
         anchor_h = scaled_anchors[:, 1:2].view((1, self.num_anchors, 1, 1))
 
-        # Add offset and scale with anchors
         pred_boxes = torch.zeros_like(prediction[..., :4], device=device)
         pred_boxes[..., 0] = cx + grid_x
         pred_boxes[..., 1] = cy + grid_y
         pred_boxes[..., 2] = torch.exp(w) * anchor_w
         pred_boxes[..., 3] = torch.exp(h) * anchor_h
 
-        pred = (pred_boxes.view(num_batches, -1, 4) * stride,
-                pred_conf.view(num_batches, -1, 1),
-                pred_cls.view(num_batches, -1, self.num_classes))
+        pred = (pred_boxes.view(num_batches, -1, 4) * stride, pred_conf.view(num_batches, -1, 1), pred_cls.view(num_batches, -1, self.num_classes))
         output = torch.cat(pred, -1)
 
         if targets is None:
@@ -312,7 +310,7 @@ class YOLODetection(nn.Module):
                                                                                                    ignore_thres=self.ignore_thres,
                                                                                                    device=device)
 
-        # Loss: Mask outputs to ignore non-existing objects (except with conf. loss)
+        ## Loss: Mask outputs to ignore non-existing objects (except with conf. loss)
         loss_x = self.mse_loss(cx[obj_mask], tx[obj_mask])
         loss_y = self.mse_loss(cy[obj_mask], ty[obj_mask])
         loss_w = self.mse_loss(w[obj_mask], tw[obj_mask])

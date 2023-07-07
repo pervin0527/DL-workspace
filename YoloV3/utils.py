@@ -146,18 +146,6 @@ def xywh2xyxy(x):
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls):
-    """
-    Compute the average precision, given the Precision-Recall curve.
-    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-    # Arguments
-        tp:    True positives (list).
-        conf:  Objectness value from 0-1 (list).
-        pred_cls: Predicted object classes (list).
-        target_cls: True object classes (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
-    """
-
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -202,36 +190,19 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
 
 
 def compute_ap(recall, precision):
-    """
-    Compute the average precision, given the recall and precision curves.
-    Code originally from https://github.com/rbgirshick/py-faster-rcnn.
-    # Arguments
-        recall:    The recall curve (list).
-        precision: The precision curve (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
-    """
-
-    # correct AP calculation
-    # first append sentinel values at the end
     mrec = np.concatenate(([0.0], recall, [1.0]))
     mpre = np.concatenate(([0.0], precision, [0.0]))
 
-    # compute the precision envelope
     for i in range(mpre.size - 1, 0, -1):
         mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
 
-    # to calculate area under PR curve, look for points
-    # where X axis (recall) changes value
     i = np.where(mrec[1:] != mrec[:-1])[0]
-
-    # and sum (\Delta recall) * prec
     ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+
     return ap
 
 
 def get_batch_statistics(outputs, targets, iou_threshold):
-    """Compute true positives, predicted scores and predicted labels per batch."""
     batch_metrics = []
     for i, output in enumerate(outputs):
 
@@ -265,6 +236,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
                     true_positives[pred_i] = 1
                     detected_boxes += [box_index]
         batch_metrics.append([true_positives, pred_scores, pred_labels])
+
     return batch_metrics
 
 
@@ -310,13 +282,6 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
 
 def non_max_suppression(prediction, conf_thres, nms_thres):
-    """
-    Removes detections with lower object confidence score than 'conf_thres' and performs
-    Non-Maximum Suppression to further filter detections.
-    Returns detections with shape:
-        (x1, y1, x2, y2, object_conf, class_score, class_pred)
-    """
-
     # (cx, cy, w, h) -> (x1, y1, x2, y2)
     prediction[..., :4] = xywh2xyxy(prediction[..., :4])
     output = [None for _ in range(len(prediction))]
@@ -356,62 +321,62 @@ def non_max_suppression(prediction, conf_thres, nms_thres):
 
 
 def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
-    nB = pred_boxes.size(0)
-    nA = pred_boxes.size(1)
-    nC = pred_cls.size(-1)
-    nG = pred_boxes.size(2)
+    nB = pred_boxes.size(0) ## batch size
+    nA = pred_boxes.size(1) ## anchor size
+    nC = pred_cls.size(-1) ## num of classes
+    nG = pred_boxes.size(2) ## num of grids
 
-    # Output tensors
-    obj_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.bool, device=device)
-    noobj_mask = torch.ones(nB, nA, nG, nG, dtype=torch.bool, device=device)
-    class_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
-    iou_scores = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
+    ## Output tensors
+    obj_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.bool, device=device)    ## 객체가 존재하는 그리드 셀을 표시하기 위한 tensor
+    no_obj_mask = torch.ones(nB, nA, nG, nG, dtype=torch.bool, device=device)   ## 객체가 존재하지 않는 그리드 셀을 표시하기 위한 tensor
+    class_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device) ## 클래스 레이블에 대한 마스크를 표시하기 위한 tensor
+    iou_scores = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device) ## 예측된 상자와 실제 타겟 상자 간의 IoU 점수를 저장하기 위한 tensor
+
+    ## target box의 변환 값(x, y, w, h)
     tx = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     ty = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     tw = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     th = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     tcls = torch.zeros(nB, nA, nG, nG, nC, dtype=torch.float, device=device)
 
-    # Convert to position relative to box
-    target_boxes = target[:, 2:6] * nG
-    gxy = target_boxes[:, :2]
-    gwh = target_boxes[:, 2:]
+    ## Convert to position relative to box
+    target_boxes = target[:, 2:6] * nG ## ground-truth box에 grid수를 곱해서 상대적인 box값으로 만든다.
+    gxy = target_boxes[:, :2] ## x,y만 가져오기
+    gwh = target_boxes[:, 2:] ## w,h만 가져오기
 
-    # Get anchors with best iou
-    ious = torch.stack([bbox_wh_iou(anchor, gwh) for anchor in anchors])
-    _, best_ious_idx = ious.max(0)
+    ious = torch.stack([bbox_wh_iou(anchor, gwh) for anchor in anchors]) ## anchor와 target box간 iou계산.
+    _, best_ious_idx = ious.max(0) ## 가장 높은 iou index 저장
 
-    # Separate target values
-    b, target_labels = target[:, :2].long().t()
+    b, target_labels = target[:, :2].long().t() ## batch index, gt-label
     gx, gy = gxy.t()
     gw, gh = gwh.t()
     gi, gj = gxy.long().t()
 
-    # Set masks
-    obj_mask[b, best_ious_idx, gj, gi] = 1
-    noobj_mask[b, best_ious_idx, gj, gi] = 0
+    obj_mask[b, best_ious_idx, gj, gi] = 1 ## objectness label 할당.
+    no_obj_mask[b, best_ious_idx, gj, gi] = 0
 
-    # Set noobj mask to zero where iou exceeds ignore threshold
+    ## ignore_thres보다 높은 IoU는 negative.
     for i, anchor_ious in enumerate(ious.t()):
-        noobj_mask[b[i], anchor_ious > ignore_thres, gj[i], gi[i]] = 0
+        no_obj_mask[b[i], anchor_ious > ignore_thres, gj[i], gi[i]] = 0
 
-    # Coordinates
+    ## Coordinates
     tx[b, best_ious_idx, gj, gi] = gx - gx.floor()
     ty[b, best_ious_idx, gj, gi] = gy - gy.floor()
 
-    # Width and height
+    ## Width and height
     tw[b, best_ious_idx, gj, gi] = torch.log(gw / anchors[best_ious_idx][:, 0] + 1e-16)
     th[b, best_ious_idx, gj, gi] = torch.log(gh / anchors[best_ious_idx][:, 1] + 1e-16)
 
-    # One-hot encoding of label
+    ## One-hot encoding of label
     tcls[b, best_ious_idx, gj, gi, target_labels] = 1
 
-    # Compute label correctness and iou at best anchor
+    ## Compute label correctness and iou at best anchor
     class_mask[b, best_ious_idx, gj, gi] = (pred_cls[b, best_ious_idx, gj, gi].argmax(-1) == target_labels).float()
     iou_scores[b, best_ious_idx, gj, gi] = bbox_iou(pred_boxes[b, best_ious_idx, gj, gi], target_boxes, x1y1x2y2=False)
 
     tconf = obj_mask.float()
-    return iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf
+    
+    return iou_scores, class_mask, obj_mask, no_obj_mask, tx, ty, tw, th, tcls, tconf
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls):

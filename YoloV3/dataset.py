@@ -133,8 +133,9 @@ class DetectionDataset(Dataset):
     def get_dataset(self):
         dataset = []
         if self.annot_type == "voc":
-            for idx in tqdm(range(len(self.file_list))):
-                file = self.file_list[idx]
+            # for idx in tqdm(range(len(self.file_list))):
+                # file = self.file_list[idx]
+            for file in self.file_list:
                 xml_path = f"{self.data_dir}/Annotations/{file}.xml"
                 bboxes, labels, isdifficult = self.read_xml(xml_path)
 

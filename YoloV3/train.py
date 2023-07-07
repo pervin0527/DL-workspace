@@ -24,6 +24,9 @@ if __name__ == "__main__":
     num_worker = min([os.cpu_count(), train_cfg.batch_size if train_cfg.batch_size > 1 else 0, 8])
     print('Using {} dataloader workers'.format(num_worker))
 
+    if not os.path.isdir(f"{train_cfg.save_dir}/weights"):
+        os.makedirs(f"{train_cfg.save_dir}/weights")
+
     ## Training Dataset
     train_transform = transforms.Compose([transforms.ToTensor()])
     train_dataset = DetectionDataset(data_dir=train_cfg.data_dir, set_name="train", annot_type="voc", transform=train_transform)
@@ -40,6 +43,12 @@ if __name__ == "__main__":
     ## Build Model
     model = YoloV3(image_size=train_cfg.img_size, num_classes=len(classes)).to(DEVICE)
     model.apply(init_weights_normal)
+    if train_cfg.pretrained_weight_path:
+        model.load_state_dict(torch.load(train_cfg.pretrained_weight_path))
+        print("torch weight loaded.")
+    else:
+        model.load_darknet_weights(train_cfg.darknet_weight_path)
+        print("darknet weight loaded.")
 
     ## Training
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.learning_rate)
@@ -75,7 +84,7 @@ if __name__ == "__main__":
         train_cls_loss /= len(train_dataloader.dataset)
         print(f"Train Loss: {train_loss:.4f}, train_box_loss : {train_bbox_loss:.4f}, train_conf_loss : {train_conf_loss:.4f}, train_cls_loss : {train_cls_loss:.4f}")
             
-        precision, recall, AP, f1, _, _, _ = evaluate(model, valid_dataloader, DEVICE)
+        precision, recall, AP, f1, ap_class = evaluate(model, valid_dataloader, DEVICE)
 
         if epoch == 0:
             best_ap = AP.mean()
@@ -83,7 +92,7 @@ if __name__ == "__main__":
             if AP.mean() <= best_ap:
                 print(f"Average Precision Increased.")
                 best_ap = AP.mean()
-                torch.save(model.state_dict(), f"{train_cfg.save_dir}/{epoch}.pth")
+                torch.save(model.state_dict(), f"{train_cfg.save_dir}/weights/ckpt_{epoch}.pth")
             else:
                 lr_patience -= 1
                 print("Average Precision Not Increase.")
@@ -95,4 +104,6 @@ if __name__ == "__main__":
                     optimizer.param_groups[0]['lr'] = new_lr
                     print(f"Learning Rate Changed. {current_lr:.4f} to {new_lr:.4f}")
 
-    torch.save(model.state_dict(), f"{train_cfg.save_dir}/final.pth")
+        print('\n')
+
+    torch.save(model.state_dict(), f"{train_cfg.save_dir}/weights/final.pth")

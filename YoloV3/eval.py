@@ -11,7 +11,7 @@ def evaluate(model, dataloader, device):
     model.eval()
     labels = []
     sample_metrics = []  # List[Tuple] -> [(TP, confs, pred)]
-    for file_name, images, targets in tqdm(dataloader, desc='Evaluate method', leave=False):
+    for file_name, images, targets in dataloader:
         if targets is None:
             continue
 

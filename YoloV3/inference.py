@@ -21,10 +21,11 @@ if __name__ == "__main__":
                "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
     
     image = cv2.imread("./000001.jpg")
-    image = cv2.resize(image, (test_cfg.img_size, test_cfg.img_size))
-    x = np.expand_dims(np.transpose(image, (2, 0, 1)), 0)
+    x = cv2.resize(image, (test_cfg.img_size, test_cfg.img_size))
+    x = np.expand_dims(np.transpose(x, (2, 0, 1)), 0)
     x = torch.tensor(x, dtype=torch.float32)
     print(x.shape)
+    print(image.shape)
     
     model = YoloV3(test_cfg.img_size, len(classes)).to(DEVICE)
     if test_cfg.weight_path:
@@ -36,7 +37,7 @@ if __name__ == "__main__":
         x = x.to(DEVICE)
         prediction = model(x)
         prediction = non_max_suppression(prediction, test_cfg.conf_thres, test_cfg.nms_thres)
-
+    
     if prediction is not None:
         prediction = rescale_boxes_original(prediction, test_cfg.img_size, image.shape[:2])
         for x1, y1, x2, y2, obj_conf, cls_conf, cls_pred in prediction:

@@ -5,15 +5,21 @@ class TrainConfig:
     device = "cuda:0"
 
     data = {
-        "train" : f"{root}/Datastes/PASCAL_VOC/VOCdevkit/VOC2012/yolov/train",
-        "val" : f"{root}/Datastes/PASCAL_VOC/VOCdevkit/VOC2012/yolov/val",
+        "train" : f"{root}/Datasets/PASCAL_VOC/VOCdevkit/VOC2012/yolo/train",
+        "val" : f"{root}/Datasets/PASCAL_VOC/VOCdevkit/VOC2012/yolo/val",
         "classes" : [x.strip() for x in open("./classes.txt")]
     }
     num_classes = len(data["classes"])
+    save_period = -1
 
     hyp = {
         "batch_size" : 32,
         "epochs" : 100,
+        "img_size" : 640,
+        "optimizer" : "SGD",
+        "patience" : 100,
+        "multi_scale" : False,
+        "cos_lr" : False,
         "lr0": 0.01,
         "lrf": 0.01,
         "momentum": 0.937,
@@ -42,6 +48,8 @@ class TrainConfig:
         "mosaic": 1.0,
         "mixup": 0.0,
         "copy_paste": 0.0,
+        "freeze" : [0],
+        "label_smoothing" : 0.0
     }
 
     anchors = [[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
@@ -84,5 +92,6 @@ class TrainConfig:
                   [[27, 22, 15], 1, "Detect", [num_classes, anchors]], 
         ]
     }
+    cache = None
 
 train_opt = TrainConfig()

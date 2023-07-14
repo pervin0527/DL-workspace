@@ -5,6 +5,7 @@ from torch import nn
 from copy import deepcopy
 from models.layers import *
 from models.utils import *
+from utils.general import copy_attr
 
 def parse_model(d, ch):  # model_dict, input_channels(3)
     anchors, nc, gd, gw, act = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d.get('activation')

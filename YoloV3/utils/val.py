@@ -127,10 +127,10 @@ def run(
     dt = Profile(), Profile(), Profile()  # profiling times
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
-    callbacks.run('on_val_start')
+    
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
     for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
-        callbacks.run('on_val_batch_start')
+        
         with dt[0]:
             if cuda:
                 im = im.to(device, non_blocking=True)
@@ -195,9 +195,6 @@ def run(
                 save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
-            callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
-
-        callbacks.run('on_val_batch_end', batch_i, im, targets, paths, shapes, preds)
 
     # Compute metrics
     stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy
@@ -213,13 +210,23 @@ def run(
     if nt.sum() == 0:
         LOGGER.warning(f'WARNING ⚠️ no labels found in {task} set, can not compute metrics without labels')
 
+    # Print results per class
+    if (verbose or nc < 50) and nc > 1 and len(stats):
+        for i, c in enumerate(ap_class):
+            LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+
+    # Print results
+    pf = '%22s' + '%11i' * 2 + '%11.3g' * 4  # print format
+    LOGGER.info(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+    if nt.sum() == 0:
+        LOGGER.warning(f'WARNING ⚠️ no labels found in {task} set, can not compute metrics without labels')
+
     # Print speeds
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
 
     # Plots
     if plots:
         confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
-        callbacks.run('on_val_end', nt, tp, fp, p, r, f1, ap, ap50, ap_class, confusion_matrix)
 
     # Save JSON
     if save_json and len(jdict):
@@ -243,6 +250,7 @@ def run(
             eval.accumulate()
             eval.summarize()
             map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+
         except Exception as e:
             LOGGER.info(f'pycocotools unable to run: {e}')
 

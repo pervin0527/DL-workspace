@@ -1,8 +1,8 @@
 import torch
-import math
 import torch.nn as nn
-from models.utils import de_parallel
-from data.utils import bbox_iou
+
+from utils.metrics import bbox_iou
+from utils.torch_utils import de_parallel
 
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441

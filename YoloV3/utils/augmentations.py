@@ -3,30 +3,42 @@ import random
 
 import cv2
 import numpy as np
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
-from data.utils import resample_segments, segment2box, bbox_ioa, xywhn2xyxy
+
+from utils.general import LOGGER, check_version, colorstr, resample_segments, segment2box, xywhn2xyxy
+from utils.metrics import bbox_ioa
 
 IMAGENET_MEAN = 0.485, 0.456, 0.406  # RGB mean
 IMAGENET_STD = 0.229, 0.224, 0.225  # RGB standard deviation
+
 
 class Albumentations:
     # YOLOv3 Albumentations class (optional, only used if package is installed)
     def __init__(self, size=640):
         self.transform = None
-        T = [
-            A.RandomResizedCrop(height=size, width=size, scale=(0.8, 1.0), ratio=(0.9, 1.11), p=0.0),
-            A.Blur(p=0.01),
-            A.MedianBlur(p=0.01),
-            A.ToGray(p=0.01),
-            A.CLAHE(p=0.01),
-            A.RandomBrightnessContrast(p=0.0),
-            A.RandomGamma(p=0.0),
-            A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
-        self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+        prefix = colorstr('albumentations: ')
+        try:
+            import albumentations as A
+            check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+
+            T = [
+                A.RandomResizedCrop(height=size, width=size, scale=(0.8, 1.0), ratio=(0.9, 1.11), p=0.0),
+                A.Blur(p=0.01),
+                A.MedianBlur(p=0.01),
+                A.ToGray(p=0.01),
+                A.CLAHE(p=0.01),
+                A.RandomBrightnessContrast(p=0.0),
+                A.RandomGamma(p=0.0),
+                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+            self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+
+            LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
+        except ImportError:  # package not installed, skip
+            pass
+        except Exception as e:
+            LOGGER.info(f'{prefix}{e}')
 
     def __call__(self, im, labels, p=1.0):
         if self.transform and random.random() < p:
@@ -296,21 +308,35 @@ def classify_albumentations(
         mean=IMAGENET_MEAN,
         std=IMAGENET_STD,
         auto_aug=False):
-    
-    if augment:  # Resize and crop
-        T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
-        if hflip > 0:
-            T += [A.HorizontalFlip(p=hflip)]
-        if vflip > 0:
-            T += [A.VerticalFlip(p=vflip)]
-        if jitter > 0:
-            color_jitter = (float(jitter), ) * 3  # repeat value for brightness, contrast, satuaration, 0 hue
-            T += [A.ColorJitter(*color_jitter, 0)]
-    else:  # Use fixed crop for eval set (reproducibility)
-        T = [A.SmallestMaxSize(max_size=size), A.CenterCrop(height=size, width=size)]
-    T += [A.Normalize(mean=mean, std=std), ToTensorV2()]  # Normalize and convert to Tensor
-    return A.Compose(T)
+    # YOLOv3 classification Albumentations (optional, only used if package is installed)
+    prefix = colorstr('albumentations: ')
+    try:
+        import albumentations as A
+        from albumentations.pytorch import ToTensorV2
+        check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+        if augment:  # Resize and crop
+            T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
+            if auto_aug:
+                # TODO: implement AugMix, AutoAug & RandAug in albumentation
+                LOGGER.info(f'{prefix}auto augmentations are currently not supported')
+            else:
+                if hflip > 0:
+                    T += [A.HorizontalFlip(p=hflip)]
+                if vflip > 0:
+                    T += [A.VerticalFlip(p=vflip)]
+                if jitter > 0:
+                    color_jitter = (float(jitter), ) * 3  # repeat value for brightness, contrast, satuaration, 0 hue
+                    T += [A.ColorJitter(*color_jitter, 0)]
+        else:  # Use fixed crop for eval set (reproducibility)
+            T = [A.SmallestMaxSize(max_size=size), A.CenterCrop(height=size, width=size)]
+        T += [A.Normalize(mean=mean, std=std), ToTensorV2()]  # Normalize and convert to Tensor
+        LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
+        return A.Compose(T)
 
+    except ImportError:  # package not installed, skip
+        LOGGER.warning(f'{prefix}⚠️ not found, install with `pip install albumentations` (recommended)')
+    except Exception as e:
+        LOGGER.info(f'{prefix}{e}')
 
 
 def classify_transforms(size=224):

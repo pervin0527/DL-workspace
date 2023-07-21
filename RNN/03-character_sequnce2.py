@@ -39,6 +39,7 @@ if __name__ == "__main__":
         y_data.append([char_dict[c] for c in y_str])  # y str to index
 
     x_one_hot = np.array([np.eye(dict_size)[x] for x in x_data])
+    # print(x_one_hot)
 
     # transform as torch tensor variable
     X = torch.FloatTensor(x_one_hot)

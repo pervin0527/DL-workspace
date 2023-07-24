@@ -101,17 +101,16 @@ class RNN(nn.Module):
 
 
 def train(category_tensor, line_tensor):
-    hidden = rnn.initHidden()
-
+    hidden = rnn.initHidden() ## 모든 시점마다 hidden state가 0이 되는 것처럼 보이지만 실제로 출력해보면 갱신되고 있음.
     rnn.zero_grad()
 
     for i in range(line_tensor.size()[0]):
-        output, hidden = rnn(line_tensor[i], hidden)
+        output, hidden = rnn(line_tensor[i], hidden) ## current state를 계산할 때 이전 state를 사용한다. 즉 이 시점에 hidden state가 update된다.
 
     loss = criterion(output, category_tensor)
     loss.backward()
 
-    # 매개변수의 경사도에 학습률을 곱해서 그 매개변수의 값에 더합니다.
+    # weight의 gradient(update 방향 및 크기)에 학습률을 곱해서 그 매개변수의 값에 더함. 즉, parameter update
     for p in rnn.parameters():
         p.data.add_(p.grad.data, alpha=-learning_rate)
 

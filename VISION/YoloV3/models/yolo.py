@@ -292,6 +292,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
 
     for i, item in enumerate(d['backbone'] + d['head']):  # from, number, module, args
+        print("============")
         f, n, m, args = item[0], item[1], item[2], item[3]
         m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
@@ -299,9 +300,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m in {
-                Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
-                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
+        if m in {Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
             c1, c2 = ch[f], args[0]
             if c2 != no:  # if not output
                 c2 = make_divisible(c2 * gw, 8)
@@ -310,21 +309,29 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
                 args.insert(2, n)  # number of repeats
                 n = 1
+
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
+
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+
         # TODO: channel, gw, gd
         elif m in {Detect, Segment}:
             args.append([ch[x] for x in f])
+
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
+
             if m is Segment:
                 args[3] = make_divisible(args[3] * gw, 8)
+
         elif m is Contract:
             c2 = ch[f] * args[0] ** 2
+
         elif m is Expand:
             c2 = ch[f] // args[0] ** 2
+
         else:
             c2 = ch[f]
 

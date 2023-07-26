@@ -17,7 +17,7 @@ class TrainConfig:
 
     device = 0
     epochs = 100
-    batch_size = 16
+    batch_size = 1
     imgsz = 416
     optimizer = "SGD"
     patience = 100

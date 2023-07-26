@@ -281,8 +281,8 @@ def train(hyp, opt, device, workers, callbacks):
 
             # Forward
             with torch.cuda.amp.autocast(amp):
-                pred = model(imgs)  # forward
-                print(pred[0].shape)
+                pred = model(imgs)  ## len pred = 3
+                # print(pred[0].shape, pred[1].shape, pred[2].shape) ## torch.Size([1, 3, 52, 52, 25]) torch.Size([1, 3, 26, 26, 25]) torch.Size([1, 3, 13, 13, 25])
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode

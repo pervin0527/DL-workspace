@@ -106,12 +106,16 @@ class BaseModel(nn.Module):
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+
             if profile:
                 self._profile_one_layer(m, x, dt)
+
             x = m(x)  # run
             y.append(x if m.i in self.save else None)  # save output
+            
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
+
         return x
 
     def _profile_one_layer(self, m, x, dt):
@@ -160,23 +164,26 @@ class DetectionModel(BaseModel):
 
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
+        
         if nc:
             self.yaml['nc'] = nc  # override yaml value
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+
         if anchors:
             LOGGER.info(f'Overriding model.yaml anchors with anchors={anchors}')
             self.yaml['anchors'] = anchors # override yaml value
+
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
-        self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
+        self.names = [str(i) for i in range(self.yaml['nc'])]  ## 0부터 len(classes)-1까지 값들이 원소인 리스트.
         self.inplace = self.yaml.get('inplace', True)
 
         # Build strides, anchors
-        m = self.model[-1]  # Detect()
+        m = self.model[-1]  ## model의 마지막 layer인 Detect module을 가져온다.
         if isinstance(m, (Detect, Segment)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, Segment) else self.forward(x)
-            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
+            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  ## [8., 16., 32.]
             check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
             self.stride = m.stride
@@ -292,7 +299,6 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
 
     for i, item in enumerate(d['backbone'] + d['head']):  # from, number, module, args
-        print("============")
         f, n, m, args = item[0], item[1], item[2], item[3]
         m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):

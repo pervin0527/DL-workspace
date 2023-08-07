@@ -1,47 +1,70 @@
-import torch
 from torch import nn
-from models.encoder import Encoder
-from models.deocder import Decoder
+from models.embedding import Embedding, PositionalEncoding
+from models.sub_layers import MultiHeadAttention, FeedForward
+from models.encoder import Encoder, EncoderLayer
+from models.decoder import Decoder, DecoderLayer
+
+class DecoderGenerator(nn.Module):
+    def __init__(self, d_model, vocab_size):
+        super().__init__()
+
+        self.linear = nn.Linear(d_model, vocab_size)
+        self.softmax = nn.LogSoftmax(dim=-1)
+
+    def forward(self, trg_representations_batch):
+        return self.softmax(self.linear(trg_representations_batch))
 
 class Transformer(nn.Module):
-    def __init__(self, src_pad_idx, trg_pad_idx, trg_sos_idx, encoder_vocab_size, decoder_vocab_size, d_model, num_head, max_len, ffn_hidden, num_layers, drop_prob, device):
-        super().__init__()
-        self.src_pad_idx = src_pad_idx
-        self.trg_pad_idx = trg_pad_idx
-        self.trg_sos_idx = trg_sos_idx
-        self.device = device
-        self.encoder = Encoder(d_model=d_model,
-                               num_head=num_head,
-                               max_len=max_len,
-                               ffn_hidden=ffn_hidden,
-                               encoder_vocab_size=encoder_vocab_size,
-                               drop_prob=drop_prob,
-                               num_layers=num_layers,
-                               device=device)
+    def __init__(self, d_model, src_vocab_size, trg_vocab_size, num_heads, num_layers, max_seq_len=5000, drop_prob=0.1):
+        super(Transformer, self).__init__()
+        self.src_embedding = Embedding(src_vocab_size, d_model)
+        self.trg_embedding = Embedding(trg_vocab_size, d_model)
 
-        self.decoder = Decoder(d_model=d_model,
-                               num_head=num_head,
-                               max_len=max_len,
-                               ffn_hidden=ffn_hidden,
-                               decoder_vocab_size=decoder_vocab_size,
-                               drop_prob=drop_prob,
-                               num_layers=num_layers,
-                               device=device)
+        self.src_pos_embedding = PositionalEncoding(d_model, max_seq_len=max_seq_len, drop_prob=drop_prob)
+        self.trg_pos_embedding = PositionalEncoding(d_model, max_seq_len=max_seq_len, drop_prob=drop_prob)
 
-    def forward(self, src, trg):
-        src_mask = self.make_src_mask(src)
-        trg_mask = self.make_trg_mask(trg)
-        enc_src = self.encoder(src, src_mask)
-        output = self.decoder(trg, enc_src, trg_mask, src_mask)
-        return output
+        mha = MultiHeadAttention(d_model, num_heads, drop_prob)
+        pwn = FeedForward(d_model, drop_prob)
+        encoder_layer = EncoderLayer(d_model, drop_prob, mha, pwn)
+        decoder_layer = DecoderLayer(d_model, drop_prob, mha, pwn)
 
-    def make_src_mask(self, src):
-        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
-        return src_mask
+        self.encoder = Encoder(encoder_layer, num_layers)
+        self.decoder = Decoder(decoder_layer, num_layers)
+        self.decoder_generator = DecoderGenerator(d_model, trg_vocab_size)
 
-    def make_trg_mask(self, trg):
-        trg_pad_mask = (trg != self.trg_pad_idx).unsqueeze(1).unsqueeze(3)
-        trg_len = trg.shape[1]
-        trg_sub_mask = torch.tril(torch.ones(trg_len, trg_len)).type(torch.ByteTensor).to(self.device)
-        trg_mask = trg_pad_mask & trg_sub_mask
-        return trg_mask
+        self.init_params()
+
+
+    def forward(self, src, trg_input, src_mask, trg_mask):
+        src_representations_batch = self.encode(src, src_mask)
+        trg_log_probs = self.decode(trg_input, src_representations_batch, trg_mask, src_mask)
+
+        return trg_log_probs
+
+
+    def encode(self, src_token_ids_batch, src_mask):
+        src_embeddings_batch = self.src_embedding(src_token_ids_batch)
+        src_embeddings_batch = self.src_pos_embedding(src_embeddings_batch)
+        src_representations_batch = self.encoder(src_embeddings_batch, src_mask)
+
+        return src_representations_batch
+    
+
+    def decode(self, trg_token_ids_batch, src_representations_batch, trg_mask, src_mask):
+        trg_embeddings_batch = self.trg_embedding(trg_token_ids_batch)
+        trg_embeddings_batch = self.trg_pos_embedding(trg_embeddings_batch)
+        
+        trg_representations_batch = self.decoder(trg_embeddings_batch, src_representations_batch, trg_mask, src_mask)
+        trg_log_probs = self.decoder_generator(trg_representations_batch)
+        
+        return trg_log_probs
+
+
+    def init_params(self, default_initialization=False):
+        # Not mentioned in the paper, but other implementations used xavier.
+        # I tested both PyTorch's default initialization and this, and xavier has tremendous impact! I didn't expect
+        # a model's perf, with normalization layers, to be so much dependent on the choice of weight initialization.
+        if not default_initialization:
+            for name, p in self.named_parameters():
+                if p.dim() > 1:
+                    nn.init.xavier_uniform_(p)

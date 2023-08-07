@@ -1,5 +1,4 @@
 import torch
-from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torchtext.datasets import Multi30k, multi30k
 from torchtext.data.utils import get_tokenizer
@@ -9,7 +8,7 @@ multi30k.URL["train"] = "https://raw.githubusercontent.com/neychev/small_DL_repo
 multi30k.URL["valid"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/validation.tar.gz"
 multi30k.URL["test"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/mmt_task1_test2016.tar.gz"
 
-class DataGenerator:
+class TokenGenerator:
     UNK_IDX = 0
     PAD_IDX = 1
     SOS_IDX = 2
@@ -76,10 +75,10 @@ class DataGenerator:
             src_batch.append(self.text_transform[self.source_lang](src_sample.rstrip("\n")))
             trg_batch.append(self.text_transform[self.target_lang](trg_sample.rstrip("\n")))
 
-        src_batch = pad_sequence(src_batch, padding_value=self.PAD_IDX)
-        trg_batch = pad_sequence(trg_batch, padding_value=self.PAD_IDX)
+        # trg_batch = pad_sequence(trg_batch, padding_value=self.PAD_IDX)
+        # src_batch = pad_sequence(src_batch, padding_value=self.PAD_IDX)
 
-        src_batch = src_batch.transpose(1, 0)
-        trg_batch = trg_batch.transpose(1, 0)
-        
+        trg_batch = pad_sequence(trg_batch, padding_value=self.PAD_IDX, batch_first=True)
+        src_batch = pad_sequence(src_batch, padding_value=self.PAD_IDX, batch_first=True)        
+
         return src_batch, trg_batch

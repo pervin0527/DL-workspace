@@ -1,102 +1,117 @@
 import torch
-from torch import nn
-from torch import optim
-from torch.utils.data import DataLoader
-from torchtext.datasets import Multi30k
-from data.en_de import TokenGenerator
-from utils.data_utils import get_input_gt, get_masks
-from models.transformer import Transformer
+from torch import nn, optim
 
-torch.set_printoptions(profile="full")
+from config import *
+from data import Multi30k
+from models.build_model import build_model
+from utils import get_bleu_score, greedy_decode
 
-def train(model, optimizer):
+def train(model, data_loader, optimizer, criterion):
     model.train()
-    train_iter = Multi30k(split='train', language_pair=(SRC_LANGUAGE, TRG_LANGUAGE))
-    train_dataloader = DataLoader(train_iter, batch_size=BATCH_SIZE, collate_fn=token_generator.collate_fn)
-    
-    total_loss = 0
-    for src, trg in train_dataloader:
-        src, trg = src.to(DEVICE), trg.to(DEVICE)
-        trg_input, trg_out = get_input_gt(trg)
+    epoch_loss = 0
+    for idx, (src, trg) in enumerate(data_loader):
+        src = src.to(DEVICE)
+        trg = trg.to(DEVICE)
+        trg_x = trg[:, :-1]
+        trg_y = trg[:, 1:]
 
-        src_mask, trg_mask, src_tokens, trg_tokens = get_masks(src, trg_input, pad_token_id)
-        pred = model(src, trg_input, src_mask, trg_mask)  
-        
         optimizer.zero_grad()
-        # loss = loss_func(pred.reshape(-1, pred.shape[-1]), trg_out.reshape(-1))
-        loss = loss_func(pred.reshape(-1, target_vocab_size), trg_out.reshape(-1))
+
+        output, _ = model(src, trg_x)
+
+        y_hat = output.contiguous().view(-1, output.shape[-1])
+        y_gt = trg_y.contiguous().view(-1)
+        loss = criterion(y_hat, y_gt)
         loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        total_loss += loss.item()
+        epoch_loss += loss.item()
 
-    return total_loss / len(list(train_dataloader))
+    return epoch_loss / len(list(data_loader))
 
 
-def evaluate(model):
+def evaluate(model, data_loader, criterion):
     model.eval()
-    val_iter = Multi30k(split="valid", language_pair=(SRC_LANGUAGE, TRG_LANGUAGE))
-    val_dataloader = DataLoader(val_iter, batch_size=BATCH_SIZE, collate_fn=token_generator.collate_fn)
+    epoch_loss = 0
 
-    total_loss = 0
-    for src, trg in val_dataloader:
-        src, trg = src.to(DEVICE), trg.to(DEVICE)
-        trg_input, trg_out = get_input_gt(trg)
+    total_bleu = []
+    with torch.no_grad():
+        for idx, (src, trg) in enumerate(data_loader):
+            src = src.to(DEVICE)
+            trg = trg.to(DEVICE)
+            trg_x = trg[:, :-1]
+            trg_y = trg[:, 1:]
 
-        src_mask, trg_mask, src_tokens, trg_tokens = get_masks(src, trg_input, pad_token_id)
-        pred = model(src, trg_input, src_mask, trg_mask)
-        loss = loss_func(pred.reshape(-1, target_vocab_size), trg_out.reshape(-1))
-        total_loss += loss.item()
+            output, _ = model(src, trg_x)
 
-    return total_loss / len(list(val_dataloader))
+            y_hat = output.contiguous().view(-1, output.shape[-1])
+            y_gt = trg_y.contiguous().view(-1)
+            loss = criterion(y_hat, y_gt)
 
+            epoch_loss += loss.item()
+            score = get_bleu_score(output, trg_y, DATASET.trg_vocab, DATASET.SPECIALS)
+            total_bleu.append(score)
+
+    loss_avr = epoch_loss / len(list(data_loader))
+    bleu_score = sum(total_bleu) / len(total_bleu)
+
+    return loss_avr, bleu_score
+
+
+def initialize_weights(model):
+    if hasattr(model, 'weight') and model.weight.dim() > 1:
+        nn.init.kaiming_uniform_(model.weight.data)
+
+
+def main():
+    train_iter, valid_iter, test_iter = DATASET.get_iter(batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
+
+    model = build_model(len(DATASET.src_vocab), len(DATASET.trg_vocab), device=DEVICE, drop_prob=DROP_PROB)
+    model.apply(initialize_weights)
+
+    optimizer = optim.Adam(params=model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, eps=ADAM_EPS)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, verbose=True, factor=SCHEDULER_FACTOR, patience=SCHEDULER_PATIENCE)
+    criterion = nn.CrossEntropyLoss(ignore_index=DATASET.PAD_IDX)
+
+    print("\nTrain Start")
+    if not os.path.isdir(SAVE_DIR):
+        os.makedirs(SAVE_DIR, exist_ok=True)
+
+    min_val_loss = 0
+    for epoch in range(EPOCHS):
+        train_loss = train(model, train_iter, optimizer, criterion)
+        valid_loss, bleu_score  = evaluate(model, valid_iter, criterion)
+
+        if epoch == 0:
+            min_val_loss = valid_loss
+
+        if epoch > 1:
+            if valid_loss < min_val_loss:
+                min_val_loss = valid_loss
+                ckpt = f"{SAVE_DIR}/{epoch:04}.pt"
+                torch.save({'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'train_loss': train_loss,
+                            'val_loss' : valid_loss}, ckpt)
+
+        if epoch > WARM_UP_STEP:
+            scheduler.step(valid_loss)
+
+        print(f"Epoch : {epoch + 1} | train_loss: {train_loss:.5f} valid_loss: {valid_loss:.5f}, bleu_score: {bleu_score:.5f}")
+        print("Predict : ", DATASET.translate(model, "A little girl climbing into a wooden playhouse .", greedy_decode))
+        print(f"Answer : Ein kleines Mädchen klettert in ein Spielhaus aus Holz . \n")
+
+    test_loss, bleu_score = evaluate(model, test_iter, criterion)
+    print(f"test_loss: {test_loss:.5f}")
+    print(f"bleu_score: {bleu_score:.5f}")
 
 if __name__ == "__main__":
-    D_MODEL = 512
-    NUM_HEADS = 8
-    NUM_LAYERS = 6
-    FFN_DIM = 512
-    MAX_SEQ_LEN = 512
-    DROP_PROB = 0.1
-
-    SRC_LANGUAGE = 'de'
-    TRG_LANGUAGE = 'en'
-    SAVE_DIR = "/home/pervinco/Models/Transformer"
-    EPOCHS = 1000
-    BATCH_SIZE = 128
-    LR = 0.0001
-    BETAS = (0.9, 0.98)
-    EPSILON = 1e-9
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    token_generator = TokenGenerator(split="train", source_lang=SRC_LANGUAGE, target_lang=TRG_LANGUAGE)
-    source_vocab_size = len(token_generator.vocab_transform[SRC_LANGUAGE])
-    target_vocab_size = len(token_generator.vocab_transform[TRG_LANGUAGE])
-    pad_token_id = token_generator.PAD_IDX
-    print(f"SRC VOCABS : {source_vocab_size}, TRG VOCABS : {target_vocab_size}, PAD TOKENS : {pad_token_id}")
-
-    model = Transformer(src_vocab_size=source_vocab_size,
-                        trg_vocab_size=target_vocab_size,
-                        d_model=D_MODEL,
-                        num_heads=NUM_HEADS,
-                        num_layers=NUM_LAYERS,
-                        max_seq_len=MAX_SEQ_LEN,
-                        drop_prob=DROP_PROB).to(DEVICE)
+    DATASET = Multi30k(source_language=SRC_LANGUAGE, 
+                       target_language=TRG_LANGUAGE, 
+                       max_seq_len=MAX_SEQ_LEN,
+                       data_dir=DATA_DIR,
+                       vocab_min_freq=2)
     
-    loss_func = nn.NLLLoss(ignore_index=pad_token_id)
-    optimizer = optim.Adam(model.parameters(), lr=LR, betas=BETAS, eps=EPSILON)
-
-    best_val_loss = 0
-    for epoch in range(1, EPOCHS + 1):
-        train_loss = train(model, optimizer)
-        valid_loss = evaluate(model)
-        print(f"Epoch : {epoch}, Train loss : {train_loss:.4f}, Valid loss : {valid_loss:.4f}")
-
-        if epoch == 1:
-            best_val_loss = valid_loss
-        
-        if epoch > 1:
-            if best_val_loss > valid_loss:
-                best_val_loss = valid_loss
-
-                torch.save(model.state_dict(), f"{SAVE_DIR}/best-{epoch}epoch.pt")
+    main()

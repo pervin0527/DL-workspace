@@ -12,7 +12,7 @@ class EncoderBlock(nn.Module):
 
     def forward(self, src, src_mask):
         out = src
-        out = self.residual1(out, lambda out: self.self_attention(query=out, key=out, value=out, mask=src_mask))
+        out = self.residual1(out, lambda out : self.self_attention(query=out, key=out, value=out, mask=src_mask))
         out = self.residual2(out, self.position_ff)
 
         return out

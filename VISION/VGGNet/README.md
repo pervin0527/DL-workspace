@@ -1,3 +1,5 @@
-# VGG
+# VERY DEEP CONVOLUTIONAL NETWORKS FOR LARGE-SCALE IMAGE RECOGNITION
 
-Paper Review [Blog](https://pervin0527.notion.site/VGGNet-VERY-DEEP-CONVOLUTIONAL-NETWORKS-FOR-LARGE-SCALE-IMAGE-RECOGNITION-8e88e520424248b4bc6cba2aad72246b?pvs=4)
+## 논문 리뷰
+
+[https://pervin0527.tistory.com/manage/newpost/?type=post&returnURL=%2Fmanage%2Fposts%2F#](https://pervin0527.tistory.com/manage/newpost/?type=post&returnURL=%2Fmanage%2Fposts%2F#)

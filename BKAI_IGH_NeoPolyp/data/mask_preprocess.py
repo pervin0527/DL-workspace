@@ -13,8 +13,8 @@ def make_dir(dir):
         os.makedirs(dir)
 
 
-def get_file_list(dir):
-    file_list = sorted(glob(f"{dir}/*.jpeg"))
+def get_file_list(dir, ext):
+    file_list = sorted(glob(f"{dir}/*.{ext}"))
 
     return file_list
 
@@ -31,22 +31,22 @@ def make_label_mask(file_list, dir):
         label_transformed = np.full(mask.shape[:2], 2, dtype=np.uint8)  # 초기 마스크를 2(background)로 설정
 
         # Red color (neoplastic polyps)를 0으로 변환
-        red_mask = (mask[:, :, 0] > 100) & (mask[:, :, 1] < 100) & (mask[:, :, 2] < 100)
+        red_mask = (mask[:, :, 0] > THRESHOLD) & (mask[:, :, 1] < 50) & (mask[:, :, 2] < 50)
         label_transformed[red_mask] = 0
 
         # Green color (non-neoplastic polyps)를 1로 변환
-        green_mask = (mask[:, :, 0] < 100) & (mask[:, :, 1] > 100) & (mask[:, :, 2] < 100)
+        green_mask = (mask[:, :, 0] < 50) & (mask[:, :, 1] > THRESHOLD) & (mask[:, :, 2] < 50)
         label_transformed[green_mask] = 1
 
-        cv2.imwrite(f"{dir}/{file_name}.jpeg", label_transformed)
+        cv2.imwrite(f"{dir}/{file_name}.png", label_transformed)
 
 
 def validate(label_dir, mask_dir):
     make_dir(PLOT_DIR)
-    label_files = get_file_list(label_dir)
-    mask_files = get_file_list(mask_dir)
+    label_files = get_file_list(label_dir, 'png')
+    mask_files = get_file_list(mask_dir, 'jpeg')
 
-    for idx in tqdm(range(len(label_files))):
+    for idx in tqdm(range(len(label_files) // 10)):
         label_file, mask_file = label_files[idx], mask_files[idx]
 
         # label = cv2.imread(label_file)
@@ -62,7 +62,6 @@ def validate(label_dir, mask_dir):
         color_decoded[label == 2] = [0, 0, 0]  # Background (Black)
 
         plt.figure(figsize=(10, 5))
-
         plt.subplot(1, 2, 1)
         plt.imshow(mask)
         plt.title('Original Mask')
@@ -71,7 +70,7 @@ def validate(label_dir, mask_dir):
         plt.imshow(color_decoded)
         plt.title('Decoded Label')
         
-        save_path = os.path.join(PLOT_DIR, f"comparison_{idx}.png")
+        save_path = f"{PLOT_DIR}/comparison_{idx}.png"
         plt.savefig(save_path)
         plt.close()
 
@@ -81,7 +80,12 @@ if __name__ == "__main__":
     MASK_DIR = f"{DATA_DIR}/train_gt/train_gt"
     OUTPUT_DIR = f"{DATA_DIR}/train_label/train_label"
     PLOT_DIR = f"{DATA_DIR}/train_label/plots"
+    
+    THRESHOLD = 50
+    VAL = True
 
-    mask_files = get_file_list(MASK_DIR)
+    mask_files = get_file_list(MASK_DIR, 'jpeg')
     make_label_mask(mask_files, OUTPUT_DIR)
-    validate(OUTPUT_DIR, MASK_DIR)
+
+    if VAL:
+        validate(OUTPUT_DIR, MASK_DIR)

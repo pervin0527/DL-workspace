@@ -1,0 +1,13 @@
+data_dir: "/home/pervinco/Datasets/BKAI_IGH_NeoPolyp"
+pre_trained_weight: "/home/pervinco/Models/checkpoint-BKAI-IGH.pth"
+sample_file: "4a17af18f72c8e6166a915669c99390d"
+
+mask_threshold: 50
+img_size: 256
+batch_size: 32
+epochs: 500
+lr: 0.01 ## 0.0001
+min_lr: 0.00001
+decay_term: 80
+early_stopping_patience: 50
+class_distribution: [1191227727, 58586641, 8713683]

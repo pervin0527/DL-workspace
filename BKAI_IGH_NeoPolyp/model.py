@@ -145,8 +145,8 @@ class TResUnet(nn.Module):
         super().__init__()
 
         """ ResNet50 """
-        # backbone = resnet50()
-        backbone = resnet101()
+        backbone = resnet50()
+        # backbone = resnet101()
 
         self.layer0 = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu)
         self.layer1 = nn.Sequential(backbone.maxpool, backbone.layer1)

@@ -1,8 +1,27 @@
 import torch
 import torch.nn.functional as F
+from torch import nn
 from torch.nn.modules.loss import _Loss
 
-def soft_dice_score(output, target, smooth = 0.0, eps = 1e-7, dims=None):
+def multi_class_dice_coefficient(y_pred, y_true, smooth=1e-15):
+    y_pred = F.softmax(y_pred, dim=1)
+    y_true_one_hot = F.one_hot(y_true.long(), y_pred.size(1)).permute(0, 3, 1, 2).float()
+    
+    dice_coeffs = []
+    for cls in range(y_pred.size(1)):
+        y_pred_cls = y_pred[:, cls]
+        y_true_cls = y_true_one_hot[:, cls]
+
+        intersection = (y_pred_cls * y_true_cls).sum()
+        cardinality = y_pred_cls.sum() + y_true_cls.sum()
+        
+        dice_cls = (2. * intersection + smooth) / (cardinality + smooth)
+        dice_coeffs.append(dice_cls)
+        
+    return torch.stack(dice_coeffs).mean().item()
+
+
+def soft_dice_score(output, target, smooth=0.0, eps=1e-7, dims=None):
     assert output.size() == target.size()
     if dims is not None:
         intersection = torch.sum(output * target, dim=dims)
@@ -17,9 +36,8 @@ def soft_dice_score(output, target, smooth = 0.0, eps = 1e-7, dims=None):
 
 
 class DiceLoss(_Loss):
-    def __init__(self, classes, log_loss, from_logits, ignore_index, smooth=0.0, eps=1e-7):
+    def __init__(self, classes=[0, 1, 2], log_loss=False, from_logits=True, ignore_index=None, smooth=0.0, eps=1e-7):
         super(DiceLoss, self).__init__()
-
         classes = torch.tensor(classes, dtype=torch.long)
         self.classes = classes
         self.from_logits = from_logits

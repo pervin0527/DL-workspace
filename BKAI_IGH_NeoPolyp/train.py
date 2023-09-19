@@ -5,6 +5,7 @@ import yaml
 import torch
 import numpy as np
 import albumentations as A
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from random import randint
@@ -13,7 +14,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 from model import TResUnet
 from data.BKAI_dataset import BKAI_Dataset
-from metrics import DiceLoss
+from metrics import DiceLoss, multi_class_dice_coefficient
 from utils import epoch_time
 
 
@@ -42,6 +43,11 @@ def predict(model):
 
     y_pred = model(x)
     pred_mask = torch.argmax(y_pred[0], dim=0).cpu().numpy()
+
+    # y_pred = torch.cat(y_pred, dim=1)
+    # _, pred_mask = torch.max(y_pred, dim=1)
+    # pred_mask = pred_mask.squeeze(0).cpu().numpy()
+
     color_decoded = np.zeros((pred_mask.shape[0], pred_mask.shape[1], 3), dtype=np.uint8)
     color_decoded[pred_mask == 0] = [0, 0, 0]
     color_decoded[pred_mask == 1] = [255, 0, 0]
@@ -67,7 +73,7 @@ def eval(model, dataloader, loss_fn, device):
     model.eval()
 
     epoch_loss = 0
-    epoch_dice_coeff = 0
+    epoch_acc = 0
     with torch.no_grad():
         for idx, (x, y) in enumerate(dataloader):
             x = x.to(device, dtype=torch.float32)
@@ -75,21 +81,22 @@ def eval(model, dataloader, loss_fn, device):
 
             y_pred = model(x)
             loss = loss_fn(y_pred, y)
-            epoch_loss += loss.item()
 
             epoch_loss += loss.item()
+            epoch_acc += multi_class_dice_coefficient(y_pred, y)
 
     epoch_loss = epoch_loss / len(dataloader)
+    epoch_acc = epoch_acc / len(dataloader)
     predict(model)
 
-    return epoch_loss
+    return epoch_loss, epoch_acc
 
 
 def train(model, dataloader, optimizer, loss_fn, device):
     model.train()
 
     epoch_loss = 0
-    epoch_dice_coeff = 0
+    epoch_acc = 0
     for idx, (x, y) in enumerate(dataloader):
         x = x.to(device, dtype=torch.float32)
         y = y.to(device, dtype=torch.float32)
@@ -101,10 +108,12 @@ def train(model, dataloader, optimizer, loss_fn, device):
         optimizer.step()
 
         epoch_loss += loss.item()
+        epoch_acc += multi_class_dice_coefficient(y_pred, y)
 
     epoch_loss = epoch_loss / len(dataloader)
+    epoch_acc = epoch_acc / len(dataloader)
 
-    return epoch_loss
+    return epoch_loss, epoch_acc
 
 
 if __name__ == "__main__":
@@ -115,13 +124,13 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_workers = min([os.cpu_count(), config["batch_size"] if config["batch_size"] > 1 else 0, 8])
 
-    train_transform = A.Compose([A.Rotate(limit=35, p=0.3),
-                                 A.HorizontalFlip(p=0.3),
-                                 A.VerticalFlip(p=0.3),
-                                 A.CoarseDropout(p=0.3, max_holes=10, max_height=32, max_width=32)])
+    # train_transform = A.Compose([A.Rotate(limit=35, p=0.3),
+    #                              A.HorizontalFlip(p=0.3),
+    #                              A.VerticalFlip(p=0.3),
+    #                              A.CoarseDropout(p=0.3, max_holes=10, max_height=32, max_width=32)])
 
     ## Load Dataset
-    train_dataset = BKAI_Dataset(config["data_dir"], "train", config["img_size"], config["mask_threshold"], train_transform)
+    train_dataset = BKAI_Dataset(config["data_dir"], "train", config["img_size"], config["mask_threshold"])
     valid_dataset = BKAI_Dataset(config["data_dir"], "valid", config["img_size"], config["mask_threshold"])
 
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
@@ -140,14 +149,15 @@ if __name__ == "__main__":
 
     ## Loss func & Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=float(config["lr"]), betas=(0.9, 0.999))
-    loss_fn = DiceLoss(classes=[0, 1, 2], log_loss=False, from_logits=True, ignore_index=None)
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=1, eta_min=config["min_lr"])  # 10 에폭마다 Warm Restart, 최소 LR는 0.00001
+    loss_fn = DiceLoss()
+    # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=1, eta_min=config["min_lr"])  # 10 에폭마다 Warm Restart, 최소 LR는 0.00001
 
     ## Epochs
+    best_valid_loss = float('inf')
     for epoch in range(config["epochs"]):
         start_time = time.time()
-        train_loss = train(model, train_dataloader, optimizer, loss_fn, device)
-        valid_loss = eval(model, valid_dataloader, loss_fn, device)
+        train_loss, train_acc = train(model, train_dataloader, optimizer, loss_fn, device)
+        valid_loss, valid_acc = eval(model, valid_dataloader, loss_fn, device)
         current_lr = optimizer.param_groups[0]['lr']
 
         end_time = time.time()
@@ -155,8 +165,18 @@ if __name__ == "__main__":
 
         data_str = f"Epoch: {epoch+1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s\n"
         data_str += f"\tCurrent Learning Rate: {current_lr} \n"  # learning rate 출력
-        data_str += f"\tTrain Loss: {train_loss:.4f} \n"
-        data_str += f"\tValid Loss: {valid_loss:.4f} \n"
+        data_str += f"\tTrain Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} \n"
+        data_str += f"\tValid Loss: {valid_loss:.4f} | Valid Acc: {valid_acc:.4f} \n"
         print(data_str)
 
-        scheduler.step()
+        if valid_loss < best_valid_loss:
+            if not os.path.isdir(config["save_dir"]):
+                os.makedirs(config["save_dir"])
+
+            best_valid_loss = valid_loss
+
+            path = config["save_dir"] + '/' + config["save_name"]
+            torch.save(model.state_dict(), path)
+
+        # scheduler.step()
+

@@ -2,34 +2,40 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class CombinedLoss(nn.Module):
-    def __init__(self, n_classes, weight_ce=0.5, weight_dice=0.5):
-        super(CombinedLoss, self).__init__()
-        self.n_classes = n_classes
-        self.weight_ce = weight_ce
-        self.weight_dice = weight_dice
-        self.ce_loss = nn.CrossEntropyLoss()
+class DiceLoss(nn.Module):
+    def __init__(self, eps=1e-7):
+        super(DiceLoss, self).__init__()
+        self.eps = eps
 
-    def dice_loss(self, input, target):
-        smooth = 1e-5
-        input = torch.softmax(input, dim=1)
-        target = target.long()
-        
-        # One-hot encoding
-        target_onehot = torch.zeros_like(input)
-        target_onehot.scatter_(1, target.unsqueeze(1), 1)
+    def forward(self, y_pred, y_true):
+        y_pred = F.softmax(y_pred, dim=1)
+        y_true_one_hot = F.one_hot(y_true, num_classes=y_pred.size(1)).permute(0, 3, 1, 2).float()
 
-        intersect = torch.sum(input * target_onehot, dim=(2,3))
-        denominator = torch.sum(input + target_onehot, dim=(2,3))
-        
-        dice_per_class = (2. * intersect + smooth) / (denominator + smooth)
-        dice_loss = 1. - dice_per_class.mean()
+        intersection = torch.sum(y_pred * y_true_one_hot, dim=(2, 3))
+        union = torch.sum(y_pred, dim=(2, 3)) + torch.sum(y_true_one_hot, dim=(2, 3))
+
+        dice_coeff = (2. * intersection + self.eps) / (union + self.eps)
+        dice_loss = 1. - dice_coeff.mean()
 
         return dice_loss
+    
 
-    def forward(self, inputs, targets):
-        ce = self.ce_loss(inputs, targets.long())
-        dice = self.dice_loss(inputs, targets)
-        
-        combined_loss = self.weight_ce * ce + self.weight_dice * dice
-        return combined_loss
+class DiceCELoss(nn.Module):
+    def __init__(self, eps=1e-7):
+        super(DiceCELoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, y_pred, y_true):
+        y_pred = F.softmax(y_pred, dim=1)
+        y_true_one_hot = F.one_hot(y_true, num_classes=y_pred.size(1)).permute(0, 3, 1, 2).float()
+
+        intersection = torch.sum(y_pred * y_true_one_hot, dim=(2, 3))
+        union = torch.sum(y_pred, dim=(2, 3)) + torch.sum(y_true_one_hot, dim=(2, 3))
+
+        dice_coeff = (2. * intersection + self.eps) / (union + self.eps)
+        dice_loss = 1. - dice_coeff.mean()
+
+        CE = F.cross_entropy(y_pred, y_true, reduction='mean')
+        DICE_CE = CE + dice_loss
+
+        return DICE_CE

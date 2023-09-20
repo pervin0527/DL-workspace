@@ -6,7 +6,10 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def predict(epoch, config, img_size, model, device):
+    model.eval()
+    
     data_dir = config["data_dir"]
     save_dir = config["save_dir"]
     num_samples = config["num_pred_samples"]
@@ -56,36 +59,6 @@ def predict(epoch, config, img_size, model, device):
     plt.tight_layout()
     plt.savefig(f"{save_dir}/predict/epoch_{epoch:>04}.png")
     plt.close()
-
-
-def calculate_weigths_labels(save_dir, dataloader, num_classes):
-    # Create an instance from the data loader
-    z = np.zeros((num_classes,))
-    
-    # Initialize tqdm
-    print("\nCalculating classes weights")
-
-    for sample in dataloader:
-        y = sample["mask"]
-        y = y.detach().cpu().numpy()
-        mask = (y >= 0) & (y < num_classes)
-        labels = y[mask].astype(np.uint8)
-        count_l = np.bincount(labels, minlength=num_classes)
-        z += count_l
-
-    total_frequency = np.sum(z)
-    class_weights = []
-    for frequency in z:
-        class_weight = 1 / (np.log(1.02 + (frequency / total_frequency)))
-        class_weights.append(class_weight)
-    ret = np.array(class_weights)
-
-    print(f"Done. {ret}")
-
-    classes_weights_path = f"{save_dir}/class_weights.npy"
-    np.save(classes_weights_path, ret)
-
-    return ret
 
 
 def epoch_time(start_time, end_time):

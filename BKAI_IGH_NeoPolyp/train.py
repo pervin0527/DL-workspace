@@ -2,13 +2,12 @@ import os
 import time
 import yaml
 import torch
-import shutil
 
 from datetime import datetime
 from torch.utils.data import DataLoader
 
 from model import TResUnet
-from metrics import CombinedLoss
+from metrics import DiceLoss, DiceCELoss
 from data.BKAI_dataset import BKAIDataset
 from utils import epoch_time, predict, save_config_to_yaml
 
@@ -70,20 +69,32 @@ if __name__ == "__main__":
     valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
     ## Load pre-trained weights & models
-    model = TResUnet()
+    model = TResUnet(backbone=config["backbone"])
     model = model.to(device)
 
     ## Optimizer
     if config["optimizer"].lower() == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=float(config["lr"]), betas=config["betas"])
+        optimizer = torch.optim.Adam(model.parameters(), lr=float(config["basic_lr"]), betas=config["betas"])
     elif config["optimizer"].lower() == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=float(config["lr"]), momentum=config["momentum"])
+        optimizer = torch.optim.SGD(model.parameters(), lr=float(config["basic_lr"]), momentum=config["momentum"])
 
     ## Loss Function
-    loss_fn = torch.nn.CrossEntropyLoss()
+    class_weights = torch.tensor([0.5, 1.0, 5.0]).to(device)
+
+    if config["loss_fn"].lower() == "ce":
+        loss_fn = torch.nn.CrossEntropyLoss()
+    elif config["loss_fn"].lower() == "dice":
+        loss_fn = DiceLoss()
+    elif config["loss_fn"].lower() == "cedice":
+        loss_fn = DiceCELoss()
+
 
     ## LR Scheduler
-    # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=1, eta_min=config["min_lr"])  # 10 에폭마다 Warm Restart, 최소 LR는 0.00001
+    if config["cosine_annealing"]:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = config["start_lr"]
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=config["min_lr"])
 
     ## make save dir
     save_dir = config["save_dir"]
@@ -108,14 +119,6 @@ if __name__ == "__main__":
         valid_loss = eval(model, valid_dataloader, loss_fn, device)
         current_lr = optimizer.param_groups[0]["lr"]
 
-        if valid_loss < best_valid_loss:
-            early_stopping_count = 0
-            best_valid_loss = valid_loss
-            torch.save(model.state_dict(), f"{save_path}/weights/{epoch:>04}_{valid_loss:.4f}")
-
-        elif valid_loss > best_valid_loss:
-            early_stopping_count += 1
-
         end_time = time.time()
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
 
@@ -123,11 +126,25 @@ if __name__ == "__main__":
         data_str += f"\tCurrent Learning Rate: {current_lr} \n"  # learning rate 출력
         data_str += f"\tTrain Loss: {train_loss:.4f} \n"
         data_str += f"\tValid Loss: {valid_loss:.4f} \n"
-        print(data_str)
 
+        if valid_loss < best_valid_loss:
+            early_stopping_count = 0
+            data_str += f"\tLoss decreased. {best_valid_loss:.4f} ---> {valid_loss:.4f} \n"
+            best_valid_loss = valid_loss
+            torch.save(model.state_dict(), f"{save_path}/weights/best.pth")
+
+        elif valid_loss > best_valid_loss:
+            patience = config["early_stopping_patience"]
+            data_str += f"\tLoss not decreased. {best_valid_loss:.4f} Remaining: [{early_stopping_count}/{patience}] \n"
+            early_stopping_count += 1
+
+        print(data_str)
         predict(epoch, config, img_size=config["img_size"], model=model, device=device)
-        # scheduler.step()
+
+        if config["cosine_annealing"]:
+            scheduler.step()
+
 
         if early_stopping_count == config["early_stopping_patience"]:
-            data_str = "Early stopping.\n"
+            print("Early Stop.\n")
             break

@@ -1,52 +1,35 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-class SegmentationLosses(object):
-    def __init__(self, weight=None, size_average=True, batch_average=True, ignore_index=255, cuda=False):
-        self.ignore_index = ignore_index
-        self.weight = weight
-        self.size_average = size_average
-        self.batch_average = batch_average
-        self.cuda = cuda
+class CombinedLoss(nn.Module):
+    def __init__(self, n_classes, weight_ce=0.5, weight_dice=0.5):
+        super(CombinedLoss, self).__init__()
+        self.n_classes = n_classes
+        self.weight_ce = weight_ce
+        self.weight_dice = weight_dice
+        self.ce_loss = nn.CrossEntropyLoss()
 
-    def build_loss(self, mode='ce'):
-        """Choices: ['ce' or 'focal']"""
-        if mode == 'ce':
-            return self.CrossEntropyLoss
-        elif mode == 'focal':
-            return self.FocalLoss
-        else:
-            raise NotImplementedError
+    def dice_loss(self, input, target):
+        smooth = 1e-5
+        input = torch.softmax(input, dim=1)
+        target = target.long()
+        
+        # One-hot encoding
+        target_onehot = torch.zeros_like(input)
+        target_onehot.scatter_(1, target.unsqueeze(1), 1)
 
-    def CrossEntropyLoss(self, logit, target):
-        n, c, h, w = logit.size()
-        criterion = nn.CrossEntropyLoss(weight=self.weight, ignore_index=self.ignore_index)
-        if self.cuda:
-            criterion = criterion.cuda()
+        intersect = torch.sum(input * target_onehot, dim=(2,3))
+        denominator = torch.sum(input + target_onehot, dim=(2,3))
+        
+        dice_per_class = (2. * intersect + smooth) / (denominator + smooth)
+        dice_loss = 1. - dice_per_class.mean()
 
-        loss = criterion(logit, target.long())
+        return dice_loss
 
-        if self.batch_average:
-            loss /= n
-
-        return loss
-
-    def FocalLoss(self, logit, target, gamma=2, alpha=0.5):
-        n, c, h, w = logit.size()
-
-        self.weight = torch.tensor([10.0, 10.0, 1.0])  # class0, class1, class2 순서
-
-        criterion = nn.CrossEntropyLoss(weight=self.weight, ignore_index=self.ignore_index)
-        if self.cuda:
-            criterion = criterion.cuda()
-
-        logpt = -criterion(logit, target.long())
-        pt = torch.exp(logpt)
-        if alpha is not None:
-            logpt *= alpha
-        loss = -((1 - pt) ** gamma) * logpt
-
-        if self.batch_average:
-            loss /= n
-
-        return loss
+    def forward(self, inputs, targets):
+        ce = self.ce_loss(inputs, targets.long())
+        dice = self.dice_loss(inputs, targets)
+        
+        combined_loss = self.weight_ce * ce + self.weight_dice * dice
+        return combined_loss

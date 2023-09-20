@@ -4,12 +4,13 @@ import yaml
 import torch
 import shutil
 
+from datetime import datetime
 from torch.utils.data import DataLoader
 
 from model import TResUnet
-from metrics import SegmentationLosses
-from data.BKAI_dataset import BKAIDatasetV1, BKAIDatasetV2
-from utils import epoch_time, predict, calculate_weigths_labels
+from metrics import CombinedLoss
+from data.BKAI_dataset import BKAIDataset
+from utils import epoch_time, predict, save_config_to_yaml
 
 
 def eval(model, dataloader, loss_fn, device):
@@ -22,7 +23,7 @@ def eval(model, dataloader, loss_fn, device):
             y = y.to(device, dtype=torch.float32)
 
             y_pred = model(x)
-            loss = loss_fn(y_pred, y)
+            loss = loss_fn(y_pred, y.long())
 
             epoch_loss += loss.item()
 
@@ -37,13 +38,12 @@ def train(model, dataloader, optimizer, loss_fn, device):
     epoch_loss = 0
     epoch_acc = 0
     for idx, (x, y) in enumerate(dataloader):
-        # x, y = data["image"], data["mask"]
         x = x.to(device, dtype=torch.float32)
         y = y.to(device, dtype=torch.float32)
 
         optimizer.zero_grad()
         y_pred = model(x)
-        loss = loss_fn(y_pred, y)
+        loss = loss_fn(y_pred, y.long())
         loss.backward()
         optimizer.step()
 
@@ -58,40 +58,48 @@ if __name__ == "__main__":
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    if os.path.exists("./predict"):
-        shutil.rmtree("./predict")
-
     ## Device Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_workers = min([os.cpu_count(), config["batch_size"] if config["batch_size"] > 1 else 0, 8])
 
     ## Load Dataset
-    train_dataset = BKAIDatasetV1(config["data_dir"], threshold=config["mask_threshold"], split="train") ## mean=config["means"], std=config["stds"]
-    valid_dataset = BKAIDatasetV1(config["data_dir"], threshold=config["mask_threshold"], split="valid") ## mean=config["means"], std=config["stds"]
+    train_dataset = BKAIDataset(config["data_dir"], threshold=config["mask_threshold"], split="train")
+    valid_dataset = BKAIDataset(config["data_dir"], threshold=config["mask_threshold"], split="valid")
 
-    train_dataloader = DataLoader(dataset=train_dataset,
-                                  batch_size=config["batch_size"],
-                                  shuffle=True,
-                                  num_workers=num_workers)
-    
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
     valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-
-    ## Calculate class weights
-    # weight = calculate_weigths_labels(config["data_dir"], train_dataloader, 3)
-    # weight = torch.from_numpy(weight.astype(np.float32))
 
     ## Load pre-trained weights & models
     model = TResUnet()
     model = model.to(device)
 
-    ## Loss func & Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(config["lr"]), betas=(0.9, 0.999))
-    loss_fn = SegmentationLosses(weight=None, cuda=device).build_loss(mode="ce")
+    ## Optimizer
+    if config["optimizer"].lower() == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=float(config["lr"]), betas=config["betas"])
+    elif config["optimizer"].lower() == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=float(config["lr"]), momentum=config["momentum"])
+
+    ## Loss Function
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    ## LR Scheduler
     # scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=1, eta_min=config["min_lr"])  # 10 에폭마다 Warm Restart, 최소 LR는 0.00001
 
-    ## Epochs
-    print("\nStart training")
+    ## make save dir
+    save_dir = config["save_dir"]
+    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = f"{save_dir}/{current_time}"
 
+    if not os.path.isdir(save_path):
+        print(save_path)
+        config["save_dir"] = save_path
+        os.makedirs(f"{save_path}/weights")
+        os.makedirs(f"{save_path}/predict")
+    
+    save_config_to_yaml(config, save_path)
+
+    ## Train start
+    print("\nTrain Start.")
     best_valid_loss = float("inf")
     early_stopping_count = 0
     for epoch in range(config["epochs"]):
@@ -101,14 +109,9 @@ if __name__ == "__main__":
         current_lr = optimizer.param_groups[0]["lr"]
 
         if valid_loss < best_valid_loss:
-            if not os.path.isdir(config["save_dir"]):
-                os.makedirs(config["save_dir"])
-
             early_stopping_count = 0
             best_valid_loss = valid_loss
-
-            path = config["save_dir"] + "/" + config["save_name"]
-            torch.save(model.state_dict(), path)
+            torch.save(model.state_dict(), f"{save_path}/weights/{epoch:>04}_{valid_loss:.4f}")
 
         elif valid_loss > best_valid_loss:
             early_stopping_count += 1
@@ -122,7 +125,7 @@ if __name__ == "__main__":
         data_str += f"\tValid Loss: {valid_loss:.4f} \n"
         print(data_str)
 
-        predict(epoch=epoch, data_dir=config["data_dir"], img_size=config["img_size"], model=model, device=device)
+        predict(epoch, config, img_size=config["img_size"], model=model, device=device)
         # scheduler.step()
 
         if early_stopping_count == config["early_stopping_patience"]:

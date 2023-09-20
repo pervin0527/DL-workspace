@@ -1,17 +1,28 @@
+## dirs
 data_dir: "/home/pervinco/Datasets/BKAI_IGH_NeoPolyp"
 save_dir: "/home/pervinco/Models/BKAI_IGH_NeoPolyp"
-save_name: "best.pth"
-pre_trained_weight: "/home/pervinco/Models/checkpoint-BKAI-IGH.pth"
 
+## normalize
 means: [138.17342764808024, 91.28627298925218, 71.78929893564148]
 stds: [75.50602558856306, 56.697154870570145, 47.498044858528985]
 
+## hyp-params
 mask_threshold: 50
 img_size: 256
 batch_size: 32
 epochs: 500
+
+optimizer: "Adam"
+betas: [0.9, 0.999]
+momentum: 0.9
+
+## basic lr or cosinelr
 lr: 0.0001 ## 0.01, 0.0001
 min_lr: 0.00001
 decay_term: 80
+
+## early-stop
 early_stopping_patience: 50
-class_distribution: [1191227727, 58586641, 8713683]
+
+## train-pred samples
+num_pred_samples: 5

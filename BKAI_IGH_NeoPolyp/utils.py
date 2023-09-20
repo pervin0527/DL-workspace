@@ -1,19 +1,26 @@
 import os
 import cv2
+import yaml
 import torch
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-def predict(epoch, data_dir, img_size, model, device):
-    if not os.path.isdir(f"./predict"):
-        os.makedirs(f"./predict")
+def predict(epoch, config, img_size, model, device):
+    data_dir = config["data_dir"]
+    save_dir = config["save_dir"]
+    num_samples = config["num_pred_samples"]
+
+    if not os.path.isdir(f"{save_dir}/predict"):
+        os.makedirs(f"{save_dir}/predict")
 
     with open(f"{data_dir}/valid.txt", "r") as f:
         files = f.readlines()
 
     random.shuffle(files)
-    samples = random.sample(files, 5)
+    samples = random.sample(files, num_samples)
+    
+    fig, axes = plt.subplots(num_samples, 2, figsize=(10, 25))
     for idx, sample in enumerate(samples):
         file = sample.strip()
 
@@ -32,12 +39,7 @@ def predict(epoch, data_dir, img_size, model, device):
         x = x.to(device)
 
         y_pred = model(x)
-
         pred_mask = torch.argmax(y_pred[0], dim=0).cpu().numpy()
-
-        # y_pred = torch.cat(y_pred, dim=1)
-        # _, pred_mask = torch.max(y_pred, dim=1)
-        # pred_mask = pred_mask.squeeze(0).cpu().numpy()
 
         color_decoded = np.zeros((pred_mask.shape[0], pred_mask.shape[1], 3), dtype=np.uint8)
         color_decoded[pred_mask == 0] = [0, 0, 0]
@@ -45,17 +47,15 @@ def predict(epoch, data_dir, img_size, model, device):
         color_decoded[pred_mask == 2] = [0, 255, 0]
         color_decoded = cv2.resize(color_decoded, (mask.shape[1], mask.shape[0]))
 
-        plt.figure(figsize=(10, 5))
-        plt.subplot(1, 2, 1)
-        plt.imshow(overlayed)
-        plt.title("Original Mask")
+        axes[idx, 0].imshow(overlayed)
+        axes[idx, 0].set_title("Original Mask")
 
-        plt.subplot(1, 2, 2)
-        plt.imshow(color_decoded)
-        plt.title("Predict Mask")
+        axes[idx, 1].imshow(color_decoded)
+        axes[idx, 1].set_title("Predict Mask")
 
-        plt.savefig(f"./predict/pred_{idx}.png")
-        plt.close()
+    plt.tight_layout()
+    plt.savefig(f"{save_dir}/predict/epoch_{epoch:>04}.png")
+    plt.close()
 
 
 def calculate_weigths_labels(save_dir, dataloader, num_classes):
@@ -87,6 +87,7 @@ def calculate_weigths_labels(save_dir, dataloader, num_classes):
 
     return ret
 
+
 def epoch_time(start_time, end_time):
     elapsed_time = end_time - start_time
     elapsed_mins = int(elapsed_time / 60)
@@ -94,8 +95,14 @@ def epoch_time(start_time, end_time):
 
     return elapsed_mins, elapsed_secs
 
+
 def print_and_save(file_path, data_str):
     print(data_str)
     with open(file_path, "a") as file:
         file.write(data_str)
         file.write("\n")
+
+
+def save_config_to_yaml(config, save_dir):
+    with open(f"{save_dir}/params.yaml", 'w') as file:
+        yaml.dump(config, file)

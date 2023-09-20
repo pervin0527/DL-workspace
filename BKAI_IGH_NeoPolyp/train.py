@@ -63,8 +63,8 @@ if __name__ == "__main__":
     num_workers = min([os.cpu_count(), config["batch_size"] if config["batch_size"] > 1 else 0, 8])
 
     ## Load Dataset
-    train_dataset = BKAIDataset(config["data_dir"], threshold=config["mask_threshold"], split="train")
-    valid_dataset = BKAIDataset(config["data_dir"], threshold=config["mask_threshold"], split="valid")
+    train_dataset = BKAIDataset(config["data_dir"], split="train", size=config["img_size"], threshold=config["mask_threshold"])
+    valid_dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"], threshold=config["mask_threshold"])
 
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
     valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)

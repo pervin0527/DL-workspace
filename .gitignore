@@ -2,3 +2,4 @@
 __pycache__/
 kowiki*
 .DS_Store
+.vscode/

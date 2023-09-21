@@ -3,7 +3,7 @@ import cv2
 import torch
 import numpy as np
 import torch.nn as nn
-from resnet import resnet18, resnet34, resnet50, resnet101, resnet152
+from model.ResNet import resnet18, resnet34, resnet50, resnet101, resnet152
 
 def save_feats_mean(x):
     b, c, h, w = x.shape
@@ -141,7 +141,7 @@ class DecoderBlock(nn.Module):
         return x
 
 class TResUnet(nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, input_size):
         super().__init__()
 
         """ Backbone """

@@ -6,10 +6,12 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
+from glob import glob
+
 
 def predict(epoch, config, img_size, model, device):
     model.eval()
-    
+
     data_dir = config["data_dir"]
     save_dir = config["save_dir"]
     num_samples = config["num_pred_samples"]
@@ -79,3 +81,34 @@ def print_and_save(file_path, data_str):
 def save_config_to_yaml(config, save_dir):
     with open(f"{save_dir}/params.yaml", 'w') as file:
         yaml.dump(config, file)
+
+
+def encode_mask(mask, threshold):
+    label_transformed = np.full(mask.shape[:2], 0, dtype=np.uint8)
+
+    red_mask = (mask[:, :, 0] > threshold) & (mask[:, :, 1] < 50) & (mask[:, :, 2] < 50)
+    label_transformed[red_mask] = 1
+
+    green_mask = (mask[:, :, 0] < 50) & (mask[:, :, 1] > threshold) & (mask[:, :, 2] < 50)
+    label_transformed[green_mask] = 2
+
+    return label_transformed
+
+
+def calculate_effective_samples(config):
+    beta = 0.9999
+    class_pixels = [0] * config["num_classes"]
+    mask_dir = config["data_dir"] + "/train_gt"
+    mask_files = sorted(glob(f"{mask_dir}/*.jpeg"))
+
+    for file in mask_files:
+        mask = cv2.imread(file)
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
+        encoded_mask = encode_mask(mask, config["mask_threshold"])
+
+        for i in range(3):
+            class_pixels[i] += (encoded_mask == i).sum().item()
+
+    effective_samples = [(1.0 - beta) / (1.0 - beta**count) for count in class_pixels]
+
+    return torch.tensor(effective_samples, dtype=torch.float32)

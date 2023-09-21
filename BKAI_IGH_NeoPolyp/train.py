@@ -6,10 +6,10 @@ import torch
 from datetime import datetime
 from torch.utils.data import DataLoader
 
-from model import TResUnet
+from model.TransResUNet import TResUnet
 from metrics import DiceLoss, DiceCELoss
 from data.BKAI_dataset import BKAIDataset
-from utils import epoch_time, predict, save_config_to_yaml
+from utils import epoch_time, predict, save_config_to_yaml, calculate_effective_samples
 
 
 def eval(model, dataloader, loss_fn, device):
@@ -61,6 +61,13 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_workers = min([os.cpu_count(), config["batch_size"] if config["batch_size"] > 1 else 0, 8])
 
+    ## Calculate weight
+    if config["use_weight"]:
+        weight = calculate_effective_samples(config)
+        weight = weight.to(device)
+    else:
+        weight = None
+
     ## Load Dataset
     train_dataset = BKAIDataset(config["data_dir"], split="train", size=config["img_size"], threshold=config["mask_threshold"])
     valid_dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"], threshold=config["mask_threshold"])
@@ -68,8 +75,8 @@ if __name__ == "__main__":
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
     valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
-    ## Load pre-trained weights & models
-    model = TResUnet(backbone=config["backbone"])
+    ## Load pre-trained weight & models
+    model = TResUnet(backbone=config["backbone"], input_size=config["img_size"])
     model = model.to(device)
 
     ## Optimizer
@@ -79,14 +86,12 @@ if __name__ == "__main__":
         optimizer = torch.optim.SGD(model.parameters(), lr=float(config["basic_lr"]), momentum=config["momentum"])
 
     ## Loss Function
-    class_weights = torch.tensor([0.5, 1.0, 5.0]).to(device)
-
     if config["loss_fn"].lower() == "ce":
-        loss_fn = torch.nn.CrossEntropyLoss()
+        loss_fn = torch.nn.CrossEntropyLoss(weight=weight)
     elif config["loss_fn"].lower() == "dice":
         loss_fn = DiceLoss()
     elif config["loss_fn"].lower() == "cedice":
-        loss_fn = DiceCELoss()
+        loss_fn = DiceCELoss(weight=weight)
 
 
     ## LR Scheduler
@@ -132,6 +137,7 @@ if __name__ == "__main__":
             data_str += f"\tLoss decreased. {best_valid_loss:.4f} ---> {valid_loss:.4f} \n"
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{save_path}/weights/best.pth")
+            predict(epoch, config, img_size=config["img_size"], model=model, device=device)
 
         elif valid_loss > best_valid_loss:
             patience = config["early_stopping_patience"]
@@ -139,7 +145,6 @@ if __name__ == "__main__":
             early_stopping_count += 1
 
         print(data_str)
-        predict(epoch, config, img_size=config["img_size"], model=model, device=device)
 
         if config["cosine_annealing"]:
             scheduler.step()

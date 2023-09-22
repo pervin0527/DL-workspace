@@ -19,19 +19,22 @@ betas: [0.9, 0.999]
 momentum: 0.9
 
 ## class weights
-use_weight: False
+use_weight: True
 num_classes: 3
 
 ## lr scheduler
 use_scheduler: True
 
-onplateau: True
+onplateau: False
 patience: 10
 
 cosine_annealing: False
 start_lr: 0.001
 min_lr: 0.000001
 decay_term: 20
+
+one_cycle: True
+max_lr: 0.01
 
 ## early-stop
 early_stopping_patience: 100

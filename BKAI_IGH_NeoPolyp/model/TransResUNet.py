@@ -141,7 +141,7 @@ class DecoderBlock(nn.Module):
         return x
 
 class TResUnet(nn.Module):
-    def __init__(self, backbone, input_size):
+    def __init__(self, backbone):
         super().__init__()
 
         """ Backbone """
@@ -162,7 +162,7 @@ class TResUnet(nn.Module):
         self.layer3 = backbone.layer3
 
         """ Bridge blocks """
-        self.b1 = Bottleneck(1024, 256, 256, num_layers=2)
+        self.b1 = Bottleneck(1024, 256, 256, num_layers=6)
         self.b2 = DilatedConv(1024, 256)
 
         """ Decoder """

@@ -77,7 +77,7 @@ if __name__ == "__main__":
     valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
 
     ## Load pre-trained weight & models
-    model = TResUnet(backbone=config["backbone"], input_size=config["img_size"])
+    model = TResUnet(backbone=config["backbone"])
     model = model.to(device)
 
     if config["pretrain_weight"] != "":
@@ -108,6 +108,11 @@ if __name__ == "__main__":
         
         elif config["onplateau"]:    
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=config["patience"])
+
+        elif config["one_cycle"]:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = config["basic_lr"]
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config["max_lr"], steps_per_epoch=len(train_dataset) // config["batch_size"], epochs=config["epochs"], anneal_strategy='linear')
 
 
     ## make save dir

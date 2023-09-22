@@ -23,7 +23,7 @@ class BKAIDataset(Dataset):
     def load_img_mask(self, index):
         file_name = self.file_list[index]
         image = cv2.imread(f"{self.base_dir}/train/{file_name}.jpeg")
-        mask = cv2.imread(f"{self.base_dir}/train_gt/{file_name}.jpeg") 
+        mask = cv2.imread(f"{self.base_dir}/train_mask/{file_name}.jpeg") 
         
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
@@ -38,10 +38,14 @@ class BKAIDataset(Dataset):
         image, mask = self.load_img_mask(index)
 
         if self.split == "train":
+            # transform_image, transform_mask = self.train_transform(image, mask)
             if random.random() < 0.5:
                 transform_image, transform_mask = self.train_transform(image, mask)
             else:
                 transform_image, transform_mask = self.mosaic_augmentation(image, mask)
+
+            if random.random() > 0.8:
+                transform_image = self.image_transform(image)
         
         else:
             transform_image, transform_mask = self.valid_transform(image, mask)
@@ -59,28 +63,25 @@ class BKAIDataset(Dataset):
 
 
     def encode_mask(self, mask):
-        label_transformed = np.full(mask.shape[:2], 0, dtype=np.uint8)
+        label_transformed = np.zeros(shape=mask.shape[:-1], dtype=np.uint8)
 
-        red_mask = (mask[:, :, 0] > self.threshold) & (mask[:, :, 1] < 50) & (mask[:, :, 2] < 50)
+        red_mask = mask[:, :, 0] >= 100
         label_transformed[red_mask] = 1
 
-        green_mask = (mask[:, :, 0] < 50) & (mask[:, :, 1] > self.threshold) & (mask[:, :, 2] < 50)
+        green_mask = mask[:, :, 1] >= 100
         label_transformed[green_mask] = 2
 
         return label_transformed
     
 
     def train_transform(self, image, mask):
-        # transform = A.Compose([A.Flip(p=0.3),
-        #                        A.ShiftScaleRotate(shift_limit_x=(-0.06, 0.06), shift_limit_y=(-0.06, 0.06), 
-        #                                           scale_limit=(-0.3, 0.1), rotate_limit=(-90, 90),
-        #                                           interpolation=0, border_mode=0, value=(0, 0, 0), mask_value=None,  rotate_method='largest_box', p=0.7)], p=1),
-        # ])
-
-        transform = A.Compose([A.HorizontalFlip(),
-                               A.VerticalFlip(),
-                               A.ColorJitter(brightness=(0.6,1.6), contrast=0.2, saturation=0.1, hue=0.01, always_apply=True),
-                               A.Affine(scale=(0.5,1.5), translate_percent=(-0.125,0.125), rotate=(-180,180), shear=(-22.5,22), always_apply=True),])        
+        transform = A.Compose([A.Rotate(limit=90, p=0.5),
+                               A.HorizontalFlip(p=0.5),
+                               A.VerticalFlip(p=0.5),
+                               A.ColorJitter(brightness=(0.6,1.6), contrast=0.2, saturation=0.1, hue=0.01, p=0.3),
+                               A.Affine(scale=(0.5,1.5), translate_percent=(-0.125,0.125), rotate=(-180,180), shear=(-22.5,22), p=0.3),
+                               A.CoarseDropout(max_holes=10, max_height=32, max_width=32, p=0.4),
+                               A.ShiftScaleRotate(shift_limit_x=(-0.06, 0.06), shift_limit_y=(-0.06, 0.06), scale_limit=(-0.3, 0.1), rotate_limit=(-90, 90), border_mode=0, value=(0, 0, 0), p=0.4)])        
         
         transformed = transform(image=image, mask=mask)
         transformed_image, transformed_mask = transformed["image"], transformed["mask"]
@@ -134,3 +135,14 @@ class BKAIDataset(Dataset):
                 mosaic_mask[cy:, cx:] = cv2.resize(mask, (w-cx, h-cy))
         
         return mosaic_img, mosaic_mask
+
+
+    def image_transform(self, image):
+        transform = A.Compose([A.Blur(p=0.5),
+                               A.RandomBrightnessContrast(p=0.5),
+                               A.CLAHE(p=0.3)])        
+        
+        transformed = transform(image=image)
+        transformed_image = transformed["image"]
+
+        return transformed_image

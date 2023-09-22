@@ -65,6 +65,7 @@ if __name__ == "__main__":
     if config["use_weight"]:
         weight = calculate_effective_samples(config)
         weight = weight.to(device)
+        print(weight)
     else:
         weight = None
 
@@ -78,6 +79,9 @@ if __name__ == "__main__":
     ## Load pre-trained weight & models
     model = TResUnet(backbone=config["backbone"], input_size=config["img_size"])
     model = model.to(device)
+
+    if config["pretrain_weight"] != "":
+        model.load_state_dict(torch.load(config["pretrain_weight"]))
 
     ## Optimizer
     if config["optimizer"].lower() == "adam":
@@ -95,11 +99,16 @@ if __name__ == "__main__":
 
 
     ## LR Scheduler
-    if config["cosine_annealing"]:
+    if config["use_scheduler"]:
         for param_group in optimizer.param_groups:
             param_group['lr'] = config["start_lr"]
 
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=config["min_lr"])
+        if config["cosine_annealing"]:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=2, eta_min=config["min_lr"])
+        
+        elif config["onplateau"]:    
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=config["patience"])
+
 
     ## make save dir
     save_dir = config["save_dir"]
@@ -137,7 +146,7 @@ if __name__ == "__main__":
             data_str += f"\tLoss decreased. {best_valid_loss:.4f} ---> {valid_loss:.4f} \n"
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{save_path}/weights/best.pth")
-            predict(epoch, config, img_size=config["img_size"], model=model, device=device)
+            predict(epoch + 1, config, img_size=config["img_size"], model=model, device=device)
 
         elif valid_loss > best_valid_loss:
             patience = config["early_stopping_patience"]
@@ -146,8 +155,8 @@ if __name__ == "__main__":
 
         print(data_str)
 
-        if config["cosine_annealing"]:
-            scheduler.step()
+        if config["use_scheduler"]:
+            scheduler.step(valid_loss)
 
 
         if early_stopping_count == config["early_stopping_patience"]:

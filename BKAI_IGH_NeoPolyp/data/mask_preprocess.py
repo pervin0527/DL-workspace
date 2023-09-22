@@ -1,91 +1,69 @@
 import os
 import cv2
-import random
 import numpy as np
 import matplotlib.pyplot as plt
-
-from glob import glob
 from tqdm import tqdm
 
-
-def make_dir(dir):
-    if not os.path.isdir(dir):
-        os.makedirs(dir)
-
-
-def get_file_list(dir, ext):
-    file_list = sorted(glob(f"{dir}/*.{ext}"))
-
-    return file_list
+def make_dir(path):
+    if not os.path.isdir(path):
+        os.makedirs(path)
 
 
-def make_label_mask(file_list, dir):
-    make_dir(dir)
+def read_txt(path):
+    with open(path, 'r') as f:
+        lines = f.readlines()
+    lines = [x.strip() for x in lines]
 
-    for idx in tqdm(range(len(file_list))):
-        file = file_list[idx]
-        file_name = file.split('/')[-1].split('.')[0]
-        mask = cv2.imread(file)
-        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
-
-        label_transformed = np.full(mask.shape[:2], 2, dtype=np.uint8)  # 초기 마스크를 2(background)로 설정
-
-        # Red color (neoplastic polyps)를 0으로 변환
-        red_mask = (mask[:, :, 0] > THRESHOLD) & (mask[:, :, 1] < 50) & (mask[:, :, 2] < 50)
-        label_transformed[red_mask] = 0
-
-        # Green color (non-neoplastic polyps)를 1로 변환
-        green_mask = (mask[:, :, 0] < 50) & (mask[:, :, 1] > THRESHOLD) & (mask[:, :, 2] < 50)
-        label_transformed[green_mask] = 1
-
-        cv2.imwrite(f"{dir}/{file_name}.png", label_transformed)
+    return lines
 
 
-def validate(label_dir, mask_dir):
-    make_dir(PLOT_DIR)
-    label_files = get_file_list(label_dir, 'png')
-    mask_files = get_file_list(mask_dir, 'jpeg')
+def encode_mask(mask, split=None, threshold=50):
+    label_transformed = np.zeros(shape=mask.shape, dtype=np.uint8)
 
-    for idx in tqdm(range(len(label_files) // 10)):
-        label_file, mask_file = label_files[idx], mask_files[idx]
+    if split == "red":
+        red_mask = mask[:, :, 0] >= threshold
+        label_transformed[red_mask] = [255, 0, 0] ## 1
 
-        # label = cv2.imread(label_file)
-        # label = cv2.cvtColor(label, cv2.COLOR_BGR2RGB)
-        label = cv2.imread(label_file, cv2.IMREAD_GRAYSCALE)
+    elif split == "green":
+        green_mask = mask[:, :, 1] >= threshold
+        label_transformed[green_mask] = [0, 255, 0] ## 2
 
-        mask = cv2.imread(mask_file)
-        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
+    elif split == "rng":
+        red_mask = mask[:, :, 0] >= threshold
+        label_transformed[red_mask] = [255, 0, 0] ## 1
+        green_mask = mask[:, :, 1] >= threshold
+        label_transformed[green_mask] = [0, 255, 0] ## 2
 
-        color_decoded = np.zeros((label.shape[0], label.shape[1], 3), dtype=np.uint8)
-        color_decoded[label == 0] = [255, 0, 0]  # Neoplastic (Red)
-        color_decoded[label == 1] = [0, 255, 0]  # Non-neoplastic (Green)
-        color_decoded[label == 2] = [0, 0, 0]  # Background (Black)
+    return label_transformed
 
-        plt.figure(figsize=(10, 5))
-        plt.subplot(1, 2, 1)
-        plt.imshow(mask)
-        plt.title('Original Mask')
 
-        plt.subplot(1, 2, 2)
-        plt.imshow(color_decoded)
-        plt.title('Decoded Label')
-        
-        save_path = f"{PLOT_DIR}/comparison_{idx}.png"
-        plt.savefig(save_path)
-        plt.close()
+def make_train_mask(total):
+    make_dir(output_dir)
+    for tmp in total:
+        split, files = tmp[0], tmp[1]
+
+        for idx in tqdm(range(len(files))):
+            file = files[idx]
+            mask = cv2.imread(f"{data_dir}/train_gt/{file}.jpeg")
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
+            encoded_mask = encode_mask(mask, split, threshold=100)
+
+            encoded_mask = cv2.cvtColor(encoded_mask, cv2.COLOR_BGR2RGB)
+            cv2.imwrite(f"{output_dir}/{file}.jpeg", encoded_mask)
 
 
 if __name__ == "__main__":
-    DATA_DIR = "/home/pervinco/Datasets/BKAI_IGH_NeoPolyp"
-    MASK_DIR = f"{DATA_DIR}/train_gt/train_gt"
-    OUTPUT_DIR = f"{DATA_DIR}/train_label/train_label"
-    PLOT_DIR = f"{DATA_DIR}/train_label/plots"
-    
-    THRESHOLD = 50
-    VAL = True
+    data_dir = "/home/pervinco/Datasets/BKAI_IGH_NeoPolyp"
+    output_dir = f"{data_dir}/train_mask"
 
-    mask_files = get_file_list(MASK_DIR, 'jpeg')
-    make_label_mask(mask_files, OUTPUT_DIR)
+    red_txt = f"{data_dir}/red.txt"
+    green_txt = f"{data_dir}/green.txt"
+    rng_txt = f"{data_dir}/rng.txt"
 
-    if VAL:
-        validate(OUTPUT_DIR, MASK_DIR)
+    red_files = read_txt(red_txt)
+    green_files = read_txt(green_txt)
+    rng_files = read_txt(rng_txt)
+
+    print(len(red_files), len(green_files), len(rng_files))
+    total_files = [["red", red_files], ["green",  green_files], ["rng", rng_files]]
+    make_train_mask(total_files)

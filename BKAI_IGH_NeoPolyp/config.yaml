@@ -1,9 +1,10 @@
 ## dirs
 data_dir: "/home/pervinco/Datasets/BKAI_IGH_NeoPolyp"
 save_dir: "/home/pervinco/Models/BKAI_IGH_NeoPolyp/TransResUNet"
+pretrain_weight: ""
 
 ## backbone
-backbone: "resnet50"
+backbone: "resnet152"
 
 ## hyp-params
 mask_threshold: 50
@@ -21,18 +22,19 @@ momentum: 0.9
 use_weight: False
 num_classes: 3
 
-## cosine annealing restart
-cosine_annealing: True
-start_lr: 0.0001
+## lr scheduler
+use_scheduler: True
+
+onplateau: True
+patience: 10
+
+cosine_annealing: False
+start_lr: 0.001
 min_lr: 0.000001
-decay_term: 80
+decay_term: 20
 
 ## early-stop
-early_stopping_patience: 50
+early_stopping_patience: 100
 
 ## train-pred samples
 num_pred_samples: 5
-
-## normalize
-means: [138.17342764808024, 91.28627298925218, 71.78929893564148]
-stds: [75.50602558856306, 56.697154870570145, 47.498044858528985]

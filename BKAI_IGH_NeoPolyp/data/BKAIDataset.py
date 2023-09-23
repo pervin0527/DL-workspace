@@ -37,11 +37,15 @@ class BKAIDataset(Dataset):
         image, mask = self.load_img_mask(index)
 
         if self.split == "train":
-            # transform_image, transform_mask = self.train_transform(image, mask)
-            if random.random() < 0.5:
+            prob = random.random()
+            if prob < 0.3:
                 transform_image, transform_mask = self.train_transform(image, mask)
-            else:
+
+            elif 0.3 < prob < 0.6:
                 transform_image, transform_mask = self.mosaic_augmentation(image, mask)
+
+            else:
+                transform_image, transform_mask = self.cutmix_augmentation(image, mask)
 
             # if random.random() > 0.5:
             #     transform_image = self.image_transform(image)
@@ -145,3 +149,34 @@ class BKAIDataset(Dataset):
         transformed_image = transformed["image"]
 
         return transformed_image
+    
+
+    def cutmix_augmentation(self, image, mask):
+        idx = random.randint(0, len(self.file_list) - 1)
+        mix_image, mix_mask = self.load_img_mask(idx)
+
+        lam = np.clip(np.random.beta(1.0, 1.0), 0.2, 0.8)
+        bbx1, bby1, bbx2, bby2 = self.rand_bbox(image.shape, lam)
+
+        image[bbx1:bbx2, bby1:bby2] = mix_image[bbx1:bbx2, bby1:bby2]
+        mask[bbx1:bbx2, bby1:bby2] = mix_mask[bbx1:bbx2, bby1:bby2]
+
+        return image, mask
+
+
+    def rand_bbox(self, size, lam):
+        W = size[1]
+        H = size[0]
+        cut_rat = np.sqrt(1. - lam)
+        cut_w = np.int64(W * cut_rat)
+        cut_h = np.int64(H * cut_rat)
+
+        cx = np.random.randint(W)
+        cy = np.random.randint(H)
+
+        bbx1 = np.clip(cx - cut_w // 2, 0, W)
+        bby1 = np.clip(cy - cut_h // 2, 0, H)
+        bbx2 = np.clip(cx + cut_w // 2, 0, W)
+        bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+        return bbx1, bby1, bbx2, bby2

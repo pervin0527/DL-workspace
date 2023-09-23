@@ -4,33 +4,30 @@ save_dir: "/home/pervinco/Models/BKAI_IGH_NeoPolyp/TransResUNet"
 pretrain_weight: ""
 
 ## backbone
-backbone: "resnet50"
-
-## encoder layers
-num_layers: 2
+backbone: "resnet152"
+num_layers: 12 ## encoder layers
 
 ## hyp-params
-epochs: 1000
+epochs: 500
 img_size: 256
-batch_size: 16
-
-loss_fn: "dice"
-optimizer: "Adam"
-betas: [0.9, 0.999]
+batch_size: 32
+initial_lr: 0.0001
+betas: [0.5, 0.99]
 momentum: 0.9
 
-## class weights
-use_weight: False
+## Loss func
 num_classes: 3
+crossentropy: True
+give_penalty: False
+penalty_factor: 2
 
 ## lr scheduler
-use_scheduler: True
-initial_lr: 0.0001
+scheduler: True
 max_lr: 0.001
 pct_start: 0.8
 
 ## early-stop
-early_stopping_patience: 100
+early_stopping_patience: 500
 
-## train-pred samples
+## pred samples
 num_pred_samples: 5

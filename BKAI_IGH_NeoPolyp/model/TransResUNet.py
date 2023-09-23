@@ -5,8 +5,6 @@ import numpy as np
 import torch.nn as nn
 import torchvision.models as models
 
-from model.ResNet import resnet18, resnet34, resnet50, resnet101, resnet152
-
 def save_feats_mean(x):
     b, c, h, w = x.shape
     if h == 256:
@@ -146,11 +144,7 @@ class TResUnet(nn.Module):
         super().__init__()
 
         """ Backbone """
-        if backbone.lower() == "resnet18":
-            backbone = resnet18()
-        elif backbone.lower() == "resnet34":
-            backbone = resnet34()
-        elif backbone.lower() == "resnet50":
+        if backbone.lower() == "resnet50":
             # backbone = resnet50()
             backbone = models.resnet50(weights="IMAGENET1K_V2")
         elif backbone.lower() == "resnet101":
@@ -166,8 +160,7 @@ class TResUnet(nn.Module):
         self.layer3 = backbone.layer3
 
         """ Bridge blocks """
-        self.b1 = Bottleneck(in_c=1024, out_c=256, dim=256, num_layers=2)
-        # self.b1 = Bottleneck(in_c=1024, out_c=256, dim=1024, num_layers=num_layers)
+        self.b1 = Bottleneck(in_c=1024, out_c=256, dim=256, num_layers=num_layers)
         self.b2 = DilatedConv(1024, 256)
 
         """ Decoder """
@@ -179,16 +172,15 @@ class TResUnet(nn.Module):
         self.output = nn.Conv2d(32, 3, kernel_size=1)
 
     def forward(self, x, heatmap=None):
-        s0 = x
-        s1 = self.layer0(s0)    ## [-1, 64, h/2, w/2]
-        s2 = self.layer1(s1)    ## [-1, 256, h/4, w/4]
-        s3 = self.layer2(s2)    ## [-1, 512, h/8, w/8]
-        s4 = self.layer3(s3)    ## [-1, 1024, h/16, w/16]
+        s0 = x                  ## torch.Size([32, 3, 256, 256])
+        s1 = self.layer0(s0)    ## [-1, 64, h/2, w/2] torch.Size([32, 64, 128, 128])
+        s2 = self.layer1(s1)    ## [-1, 256, h/4, w/4] torch.Size([32, 256, 64, 64])
+        s3 = self.layer2(s2)    ## [-1, 512, h/8, w/8] torch.Size([32, 512, 32, 32])
+        s4 = self.layer3(s3)    ## [-1, 1024, h/16, w/16] torch.Size([32, 1024, 16, 16])
 
         b1 = self.b1(s4)
         b2 = self.b2(s4)
         b3 = torch.cat([b1, b2], axis=1)
-        # print(b3.shape)
 
         d1 = self.d1(b3, s3)
         d2 = self.d2(d1, s2)
@@ -202,9 +194,3 @@ class TResUnet(nn.Module):
             return hmap, y
         else:
             return y
-
-if __name__ == "__main__":
-    x = torch.randn((8, 3, 256, 256))
-    model = TResUnet()
-    y = model(x)
-    print(y.shape)

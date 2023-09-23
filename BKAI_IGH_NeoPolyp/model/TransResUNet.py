@@ -17,6 +17,7 @@ def save_feats_mean(x):
             x = x.astype(np.uint8)
             x = cv2.applyColorMap(x, cv2.COLORMAP_JET)
             x = np.array(x, dtype=np.uint8)
+
             return x
 
 class ResidualBlock(nn.Module):
@@ -24,23 +25,22 @@ class ResidualBlock(nn.Module):
         super().__init__()
 
         self.relu = nn.ReLU()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU(),
-            nn.Conv2d(out_c, out_c, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_c)
-        )
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=1, padding=0),
-            nn.BatchNorm2d(out_c)
-        )
+        self.conv = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=3, padding=1),
+                                  nn.BatchNorm2d(out_c),
+                                  nn.ReLU(),
+                                  nn.Conv2d(out_c, out_c, kernel_size=3, padding=1),
+                                  nn.BatchNorm2d(out_c))
+        
+        self.shortcut = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=1, padding=0),
+                                      nn.BatchNorm2d(out_c))
 
     def forward(self, inputs):
         x1 = self.conv(inputs)
         x2 = self.shortcut(inputs)
         x = self.relu(x1 + x2)
+
         return x
+
 
 class EncoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
@@ -51,26 +51,23 @@ class EncoderBlock(nn.Module):
     def forward(self, inputs):
         x = self.r1(inputs)
         p = self.pool(x)
+
         return x, p
 
 class Bottleneck(nn.Module):
     def __init__(self, in_c, out_c, dim, num_layers=2):
         super().__init__()
 
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=1, padding=0),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.conv1 = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=1, padding=0),
+                                   nn.BatchNorm2d(out_c),
+                                   nn.ReLU())
 
         encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=8)
         self.tblock = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(out_c, out_c, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.conv2 = nn.Sequential(nn.Conv2d(out_c, out_c, kernel_size=3, padding=1),
+                                   nn.BatchNorm2d(out_c),
+                                   nn.ReLU())
 
     def forward(self, x):
         x = self.conv1(x)
@@ -79,41 +76,33 @@ class Bottleneck(nn.Module):
         x = self.tblock(x)
         x = x.reshape((b, c, h, w))
         x = self.conv2(x)
+
         return x
+
 
 class DilatedConv(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
 
-        self.c1 = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, padding=1, dilation=1),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.c1 = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=3, padding=1, dilation=1),
+                                nn.BatchNorm2d(out_c),
+                                nn.ReLU())
 
-        self.c2 = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, padding=3, dilation=3),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.c2 = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=3, padding=3, dilation=3),
+                                nn.BatchNorm2d(out_c),
+                                nn.ReLU())
 
-        self.c3 = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, padding=6, dilation=6),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.c3 = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=3, padding=6, dilation=6),
+                                nn.BatchNorm2d(out_c),
+                                nn.ReLU())
 
-        self.c4 = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=3, padding=9, dilation=9),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.c4 = nn.Sequential(nn.Conv2d(in_c, out_c, kernel_size=3, padding=9, dilation=9),
+                                nn.BatchNorm2d(out_c),
+                                nn.ReLU())
 
-        self.c5 = nn.Sequential(
-            nn.Conv2d(out_c*4, out_c, kernel_size=1, padding=0),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU()
-        )
+        self.c5 = nn.Sequential(nn.Conv2d(out_c*4, out_c, kernel_size=1, padding=0),
+                                nn.BatchNorm2d(out_c),
+                                nn.ReLU())
 
     def forward(self, inputs):
         x1 = self.c1(inputs)
@@ -122,12 +111,13 @@ class DilatedConv(nn.Module):
         x4 = self.c4(inputs)
         x = torch.cat([x1, x2, x3, x4], axis=1)
         x = self.c5(x)
+
         return x
+
 
 class DecoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
-
         self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
         self.r1 = ResidualBlock(in_c[0]+in_c[1], out_c)
         self.r2 = ResidualBlock(out_c, out_c)
@@ -137,7 +127,9 @@ class DecoderBlock(nn.Module):
         x = torch.cat([x, skip], axis=1)
         x = self.r1(x)
         x = self.r2(x)
+
         return x
+
 
 class TResUnet(nn.Module):
     def __init__(self, backbone, num_layers=2):
@@ -158,39 +150,43 @@ class TResUnet(nn.Module):
         self.layer1 = nn.Sequential(backbone.maxpool, backbone.layer1)
         self.layer2 = backbone.layer2
         self.layer3 = backbone.layer3
+        self.layer4 = backbone.layer4
 
         """ Bridge blocks """
-        self.b1 = Bottleneck(in_c=1024, out_c=256, dim=256, num_layers=num_layers)
-        self.b2 = DilatedConv(1024, 256)
+        self.b1 = Bottleneck(2048, 512, 64, num_layers=2)
+        self.b2 = DilatedConv(2048, 512)
 
         """ Decoder """
-        self.d1 = DecoderBlock([512, 512], 256)
-        self.d2 = DecoderBlock([256, 256], 128)
-        self.d3 = DecoderBlock([128, 64], 64)
-        self.d4 = DecoderBlock([64, 3], 32)
+        self.d1 = DecoderBlock([1024, 1024], 512)
+        self.d2 = DecoderBlock([512, 512], 256)
+        self.d3 = DecoderBlock([256, 256], 128)
+        self.d4 = DecoderBlock([128, 64], 64)
+        self.d5 = DecoderBlock([64, 3], 32)
 
         self.output = nn.Conv2d(32, 3, kernel_size=1)
 
     def forward(self, x, heatmap=None):
-        s0 = x                  ## torch.Size([32, 3, 256, 256])
-        s1 = self.layer0(s0)    ## [-1, 64, h/2, w/2] torch.Size([32, 64, 128, 128])
-        s2 = self.layer1(s1)    ## [-1, 256, h/4, w/4] torch.Size([32, 256, 64, 64])
-        s3 = self.layer2(s2)    ## [-1, 512, h/8, w/8] torch.Size([32, 512, 32, 32])
-        s4 = self.layer3(s3)    ## [-1, 1024, h/16, w/16] torch.Size([32, 1024, 16, 16])
+        s0 = x
+        s1 = self.layer0(s0)
+        s2 = self.layer1(s1)
+        s3 = self.layer2(s2)
+        s4 = self.layer3(s3)
+        s5 = self.layer4(s4)
 
-        b1 = self.b1(s4)
-        b2 = self.b2(s4)
+        b1 = self.b1(s5)
+        b2 = self.b2(s5)
         b3 = torch.cat([b1, b2], axis=1)
 
-        d1 = self.d1(b3, s3)
-        d2 = self.d2(d1, s2)
-        d3 = self.d3(d2, s1)
-        d4 = self.d4(d3, s0)
+        d1 = self.d1(b3, s4)
+        d2 = self.d2(d1, s3)
+        d3 = self.d3(d2, s2)
+        d4 = self.d4(d3, s1)
+        d5 = self.d5(d4, s0)
 
-        y = self.output(d4)
+        y = self.output(d5)
 
         if heatmap != None:
-            hmap = save_feats_mean(d4)
+            hmap = save_feats_mean(d5)
             return hmap, y
         else:
             return y

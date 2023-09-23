@@ -90,10 +90,10 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(config["pretrain_weight"]))
 
     ## Loss Function
-    loss_fn = DiceLoss(num_classes=config["num_classes"], crossentropy=config["crossentropy"], give_penalty=config["give_penalty"], penalty_factor=config["penalty_factor"])
+    loss_fn = DiceLoss(num_classes=config["num_classes"], crossentropy=config["crossentropy"])
 
     ## Optimizer & LR Scheduler
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["initial_lr"], betas=config["betas"])
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["initial_lr"], betas=config["betas"], weight_decay=config["weight_decay"])
     if config["scheduler"]:
         div_factor = config["max_lr"] / config["initial_lr"]
         final_div_factor = config["max_lr"] / config["initial_lr"]

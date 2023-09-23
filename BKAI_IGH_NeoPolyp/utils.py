@@ -7,11 +7,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from glob import glob
+from data.BKAIDataset import BKAIDataset
 
 
 def predict(epoch, config, img_size, model, device):
     model.eval()
 
+    dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"])
     data_dir = config["data_dir"]
     save_dir = config["save_dir"]
     num_samples = config["num_pred_samples"]
@@ -38,10 +40,9 @@ def predict(epoch, config, img_size, model, device):
         overlayed = cv2.addWeighted(image, 0.7, mask, 0.3, 0)
 
         x = cv2.resize(image, (img_size, img_size))
-        x = np.transpose(x, (2, 0, 1))  ## H, W, C -> C, H, W
+        x = dataset.normalize(x)
         x = np.expand_dims(x, 0)
-        x = torch.from_numpy(x) / 255.0
-        x = x.to(device)
+        x = torch.from_numpy(x).to(device)
 
         y_pred = model(x)
         pred_mask = torch.argmax(y_pred[0], dim=0).cpu().numpy()

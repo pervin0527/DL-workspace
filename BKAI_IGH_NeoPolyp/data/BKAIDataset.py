@@ -6,17 +6,41 @@ import albumentations as A
 from torch.utils.data import Dataset
 
 class BKAIDataset(Dataset):
-    def __init__(self, base_dir, split, size):
+    def __init__(self, base_dir, split, size, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
         super().__init__()
         self.base_dir = base_dir
         self.split = split
         self.size = size
+        self.mean, self.std = mean, std
 
         self.set_txt = f"{base_dir}/{split}.txt"
         with open(self.set_txt, "r") as f:
             file_list = f.readlines()
 
         self.file_list = [x.strip() for x in file_list]
+
+        self.train_transform = A.Compose([A.Rotate(limit=90, p=0.6),
+                                          A.HorizontalFlip(p=0.7),
+                                          A.VerticalFlip(p=0.7),
+                                          A.ColorJitter(brightness=(0.6,1.6), contrast=0.2, saturation=0.1, hue=0.01, p=0.5),
+                                          A.Affine(scale=(0.5,1.5), translate_percent=(-0.125,0.125), rotate=(-180,180), shear=(-22.5,22), p=0.3),
+                                          A.CoarseDropout(max_holes=1, max_height=100, max_width=100, p=0.4),
+                                          A.ShiftScaleRotate(shift_limit_x=(-0.06, 0.06), shift_limit_y=(-0.06, 0.06), scale_limit=(-0.3, 0.1), rotate_limit=(-90, 90), border_mode=0, value=(0, 0, 0), p=0.8)])   
+        
+        self.image_transform = A.Compose([A.Blur(p=0.4),
+                                          A.RandomBrightnessContrast(p=0.8),
+                                          A.CLAHE(p=0.5)])   
+        
+
+    def normalize(self, image):
+        image = np.array(image).astype(np.float32)
+        image /= 255.0
+        image -= self.mean
+        image /= self.std
+
+        image = np.transpose(image, (2, 0, 1)) ## H, W, C -> C, H, W
+
+        return image
 
     
     def load_img_mask(self, index):
@@ -39,23 +63,20 @@ class BKAIDataset(Dataset):
         if self.split == "train":
             prob = random.random()
             if prob < 0.3:
-                transform_image, transform_mask = self.train_transform(image, mask)
-
+                transform_image, transform_mask = self.train_img_mask_transform(image, mask)
             elif 0.3 < prob < 0.6:
                 transform_image, transform_mask = self.mosaic_augmentation(image, mask)
-
             else:
                 transform_image, transform_mask = self.cutmix_augmentation(image, mask)
 
-            # if random.random() > 0.5:
-            #     transform_image = self.image_transform(image)
+            if random.random() > 0.5:
+                transform_image = self.train_image_transform(image)
         
         else:
-            transform_image, transform_mask = self.valid_transform(image, mask)
+            transform_image = image
+            transform_mask = mask
         
-        transform_image = np.transpose(transform_image, (2, 0, 1)) ## H, W, C -> C, H, W
-        transform_image = transform_image / 255.0
-
+        transform_image = self.normalize(transform_image)
         transform_mask = self.encode_mask(transform_mask)
 
         return transform_image, transform_mask
@@ -77,27 +98,9 @@ class BKAIDataset(Dataset):
         return label_transformed
     
 
-    def train_transform(self, image, mask):
-        transform = A.Compose([A.Rotate(limit=90, p=0.5),
-                               A.HorizontalFlip(p=0.5),
-                               A.VerticalFlip(p=0.5),
-                               A.ColorJitter(brightness=(0.6,1.6), contrast=0.2, saturation=0.1, hue=0.01, p=0.3),
-                               A.Affine(scale=(0.5,1.5), translate_percent=(-0.125,0.125), rotate=(-180,180), shear=(-22.5,22), p=0.3),
-                               A.CoarseDropout(max_holes=10, max_height=32, max_width=32, p=0.4),
-                               A.ShiftScaleRotate(shift_limit_x=(-0.06, 0.06), shift_limit_y=(-0.06, 0.06), scale_limit=(-0.3, 0.1), rotate_limit=(-90, 90), border_mode=0, value=(0, 0, 0), p=0.4)])        
-        
-        transformed = transform(image=image, mask=mask)
+    def train_img_mask_transform(self, image, mask):     
+        transformed = self.train_transform(image=image, mask=mask)
         transformed_image, transformed_mask = transformed["image"], transformed["mask"]
-
-        return transformed_image, transformed_mask
-    
-
-    def valid_transform(self, image, mask):
-        transform = A.Compose([A.Resize(self.size, self.size, p=1)])
-        
-        transformed = transform(image=image, mask=mask)
-        transformed_image = transformed['image']
-        transformed_mask = transformed['mask']
 
         return transformed_image, transformed_mask
     
@@ -140,12 +143,8 @@ class BKAIDataset(Dataset):
         return mosaic_img, mosaic_mask
 
 
-    def image_transform(self, image):
-        transform = A.Compose([A.Blur(p=0.5),
-                               A.RandomBrightnessContrast(p=0.5),
-                               A.CLAHE(p=0.3)])        
-        
-        transformed = transform(image=image)
+    def train_image_transform(self, image):     
+        transformed = self.image_transform(image=image)
         transformed_image = transformed["image"]
 
         return transformed_image

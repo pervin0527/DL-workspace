@@ -3,6 +3,8 @@ import cv2
 import torch
 import numpy as np
 import torch.nn as nn
+import torchvision.models as models
+
 from model.ResNet import resnet18, resnet34, resnet50, resnet101, resnet152
 
 def save_feats_mean(x):
@@ -45,7 +47,6 @@ class ResidualBlock(nn.Module):
 class EncoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
-
         self.r1 = ResidualBlock(in_c, out_c)
         self.pool = nn.MaxPool2d((2, 2))
 
@@ -141,7 +142,7 @@ class DecoderBlock(nn.Module):
         return x
 
 class TResUnet(nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, num_layers=2):
         super().__init__()
 
         """ Backbone """
@@ -150,11 +151,14 @@ class TResUnet(nn.Module):
         elif backbone.lower() == "resnet34":
             backbone = resnet34()
         elif backbone.lower() == "resnet50":
-            backbone = resnet50()
+            # backbone = resnet50()
+            backbone = models.resnet50(weights="IMAGENET1K_V2")
         elif backbone.lower() == "resnet101":
-            backbone = resnet101()
+            # backbone = resnet101()
+            backbone = models.resnet101(weights="IMAGENET1K_V2")
         elif backbone.lower() == "resnet152":
-            backbone = resnet152()
+            # backbone = resnet152()
+            backbone = models.resnet152(weights="IMAGENET1K_V2")
 
         self.layer0 = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu)
         self.layer1 = nn.Sequential(backbone.maxpool, backbone.layer1)
@@ -162,7 +166,8 @@ class TResUnet(nn.Module):
         self.layer3 = backbone.layer3
 
         """ Bridge blocks """
-        self.b1 = Bottleneck(1024, 256, 256, num_layers=6)
+        self.b1 = Bottleneck(in_c=1024, out_c=256, dim=256, num_layers=2)
+        # self.b1 = Bottleneck(in_c=1024, out_c=256, dim=1024, num_layers=num_layers)
         self.b2 = DilatedConv(1024, 256)
 
         """ Decoder """

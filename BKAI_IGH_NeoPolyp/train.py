@@ -2,13 +2,14 @@ import os
 import time
 import yaml
 import torch
+import matplotlib.pyplot as plt
 
 from datetime import datetime
 from torch.utils.data import DataLoader
 
 from model.TransResUNet import TResUnet
 from metrics import DiceLoss, DiceCELoss
-from data.BKAI_dataset import BKAIDataset
+from data.BKAIDataset import BKAIDataset
 from utils import epoch_time, predict, save_config_to_yaml, calculate_effective_samples
 
 
@@ -69,52 +70,6 @@ if __name__ == "__main__":
     else:
         weight = None
 
-    ## Load Dataset
-    train_dataset = BKAIDataset(config["data_dir"], split="train", size=config["img_size"], threshold=config["mask_threshold"])
-    valid_dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"], threshold=config["mask_threshold"])
-
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
-    valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
-
-    ## Load pre-trained weight & models
-    model = TResUnet(backbone=config["backbone"])
-    model = model.to(device)
-
-    if config["pretrain_weight"] != "":
-        model.load_state_dict(torch.load(config["pretrain_weight"]))
-
-    ## Optimizer
-    if config["optimizer"].lower() == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=float(config["basic_lr"]), betas=config["betas"])
-    elif config["optimizer"].lower() == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=float(config["basic_lr"]), momentum=config["momentum"])
-
-    ## Loss Function
-    if config["loss_fn"].lower() == "ce":
-        loss_fn = torch.nn.CrossEntropyLoss(weight=weight)
-    elif config["loss_fn"].lower() == "dice":
-        loss_fn = DiceLoss()
-    elif config["loss_fn"].lower() == "cedice":
-        loss_fn = DiceCELoss(weight=weight)
-
-
-    ## LR Scheduler
-    if config["use_scheduler"]:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = config["start_lr"]
-
-        if config["cosine_annealing"]:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=config["decay_term"], T_mult=2, eta_min=config["min_lr"])
-        
-        elif config["onplateau"]:    
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=config["patience"])
-
-        elif config["one_cycle"]:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = config["basic_lr"]
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config["max_lr"], steps_per_epoch=len(train_dataset) // config["batch_size"], epochs=config["epochs"], anneal_strategy='linear')
-
-
     ## make save dir
     save_dir = config["save_dir"]
     current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -128,21 +83,68 @@ if __name__ == "__main__":
     
     save_config_to_yaml(config, save_path)
 
+    ## Load Dataset
+    train_dataset = BKAIDataset(config["data_dir"], split="train", size=config["img_size"])
+    valid_dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"])
+
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=num_workers)
+    valid_dataloader = DataLoader(dataset=valid_dataset, batch_size=config["batch_size"], num_workers=num_workers)
+
+    ## Load pre-trained weight & models
+    model = TResUnet(backbone=config["backbone"], num_layers=config["num_layers"])
+    model = model.to(device)
+
+    if config["pretrain_weight"] != "":
+        model.load_state_dict(torch.load(config["pretrain_weight"]))
+
+    ## Loss Function
+    if config["loss_fn"].lower() == "ce":
+        loss_fn = torch.nn.CrossEntropyLoss(weight=weight)
+    elif config["loss_fn"].lower() == "dice":
+        loss_fn = DiceLoss()
+    elif config["loss_fn"].lower() == "cedice":
+        loss_fn = DiceCELoss(weight=weight)
+
+
+    ## Optimizer & LR Scheduler
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["initial_lr"], betas=config["betas"])
+    if config["use_scheduler"]:
+        div_factor = config["max_lr"] / config["initial_lr"]
+        final_div_factor = config["max_lr"] / config["initial_lr"]
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+                                                        anneal_strategy="cos",
+                                                        max_lr=config["max_lr"],
+                                                        total_steps=config["epochs"],
+                                                        pct_start=config["pct_start"],
+                                                        div_factor=div_factor,
+                                                        final_div_factor=final_div_factor,
+                                                        verbose=True)
+
+        # lrs = []
+        # for i in range(config["epochs"]):
+        #     optimizer.step()
+        #     lrs.append(optimizer.param_groups[0]["lr"])
+        #     scheduler.step()
+
+        # plt.plot(lrs)
+        # plt.savefig("./one_cycle.png")
+
     ## Train start
     print("\nTrain Start.")
     best_valid_loss = float("inf")
     early_stopping_count = 0
-    for epoch in range(config["epochs"]):
+    epochs = config["epochs"]
+    for epoch in range(epochs):
         start_time = time.time()
+        # current_lr = optimizer.param_groups[0]["lr"]
         train_loss = train(model, train_dataloader, optimizer, loss_fn, device)
         valid_loss = eval(model, valid_dataloader, loss_fn, device)
-        current_lr = optimizer.param_groups[0]["lr"]
 
         end_time = time.time()
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
 
-        data_str = f"Epoch: {epoch+1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s\n"
-        data_str += f"\tCurrent Learning Rate: {current_lr} \n"  # learning rate 출력
+        data_str = f"Epoch [{epochs}|{epoch+1:02}] | Epoch Time: {epoch_mins}m {epoch_secs}s\n"
+        # data_str += f"\tCurrent Learning Rate: {current_lr} \n"
         data_str += f"\tTrain Loss: {train_loss:.4f} \n"
         data_str += f"\tValid Loss: {valid_loss:.4f} \n"
 
@@ -161,8 +163,7 @@ if __name__ == "__main__":
         print(data_str)
 
         if config["use_scheduler"]:
-            scheduler.step(valid_loss)
-
+            scheduler.step()
 
         if early_stopping_count == config["early_stopping_patience"]:
             print("Early Stop.\n")

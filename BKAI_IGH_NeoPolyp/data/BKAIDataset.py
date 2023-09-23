@@ -6,12 +6,11 @@ import albumentations as A
 from torch.utils.data import Dataset
 
 class BKAIDataset(Dataset):
-    def __init__(self, base_dir, split, size, threshold=50):
+    def __init__(self, base_dir, split, size):
         super().__init__()
         self.base_dir = base_dir
         self.split = split
         self.size = size
-        self.threshold = threshold
 
         self.set_txt = f"{base_dir}/{split}.txt"
         with open(self.set_txt, "r") as f:
@@ -44,8 +43,8 @@ class BKAIDataset(Dataset):
             else:
                 transform_image, transform_mask = self.mosaic_augmentation(image, mask)
 
-            if random.random() > 0.8:
-                transform_image = self.image_transform(image)
+            # if random.random() > 0.5:
+            #     transform_image = self.image_transform(image)
         
         else:
             transform_image, transform_mask = self.valid_transform(image, mask)

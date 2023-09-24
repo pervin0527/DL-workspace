@@ -32,35 +32,11 @@ class BKAIDataset(Dataset):
                                           A.CLAHE(p=0.5)])   
         
 
-    def normalize(self, image):
-        image = np.array(image).astype(np.float32)
-        image /= 255.0
-        image -= self.mean
-        image /= self.std
-
-        image = np.transpose(image, (2, 0, 1)) ## H, W, C -> C, H, W
-
-        return image
-
-    
-    def load_img_mask(self, index):
-        file_name = self.file_list[index]
-        image = cv2.imread(f"{self.base_dir}/train/{file_name}.jpeg")
-        mask = cv2.imread(f"{self.base_dir}/train_mask/{file_name}.jpeg") 
-        
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
-
-        image = cv2.resize(image, (self.size, self.size))
-        mask = cv2.resize(mask, (self.size, self.size))
-
-        return image, mask
-        
-
     def __getitem__(self, index):
         image, mask = self.load_img_mask(index)
 
         if self.split == "train":
+            # transform_image, transform_mask = self.train_img_mask_transform(image, mask)
             prob = random.random()
             if prob < 0.3:
                 transform_image, transform_mask = self.train_img_mask_transform(image, mask)
@@ -84,6 +60,31 @@ class BKAIDataset(Dataset):
 
     def __len__(self):
         return len(self.file_list)
+
+
+    def normalize(self, image):
+        image = np.array(image).astype(np.float32)
+        image /= 255.0
+        image -= self.mean
+        image /= self.std
+
+        image = np.transpose(image, (2, 0, 1)) ## H, W, C -> C, H, W
+
+        return image
+
+    
+    def load_img_mask(self, index):
+        file_name = self.file_list[index]
+        image = cv2.imread(f"{self.base_dir}/train/{file_name}.jpeg")
+        mask = cv2.imread(f"{self.base_dir}/train_mask/{file_name}.jpeg") 
+        
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
+
+        image = cv2.resize(image, (self.size, self.size))
+        mask = cv2.resize(mask, (self.size, self.size))
+
+        return image, mask
 
 
     def encode_mask(self, mask):

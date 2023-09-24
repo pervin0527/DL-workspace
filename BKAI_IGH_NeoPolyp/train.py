@@ -8,7 +8,7 @@ from tqdm import tqdm
 from datetime import datetime
 from torch.utils.data import DataLoader
 
-from metrics import DiceLoss
+from metrics import DiceLoss, TverskyLoss
 from model.TransResUNet import TResUnet
 from data.BKAIDataset import BKAIDataset
 from utils import epoch_time, predict, save_config_to_yaml
@@ -92,20 +92,22 @@ if __name__ == "__main__":
 
     ## Loss Function
     loss_fn = DiceLoss(num_classes=config["num_classes"], crossentropy=config["crossentropy"])
+    loss_fn = TverskyLoss(num_classes=config["num_classes"], alpha=0.7, beta=0.3)
 
     ## Optimizer & LR Scheduler
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["initial_lr"], betas=config["betas"], weight_decay=config["weight_decay"])
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["initial_lr"], betas=config["betas"], weight_decay=config["weight_decay"])
     if config["scheduler"]:
-        div_factor = config["max_lr"] / config["initial_lr"]
-        final_div_factor = config["max_lr"] / config["initial_lr"]
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-                                                        anneal_strategy="cos",
-                                                        max_lr=config["max_lr"],
-                                                        total_steps=config["epochs"],
-                                                        pct_start=config["pct_start"],
-                                                        div_factor=div_factor,
-                                                        final_div_factor=final_div_factor,
-                                                        verbose=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, verbose=True)
+        # div_factor = config["max_lr"] / config["initial_lr"]
+        # final_div_factor = config["max_lr"] / config["initial_lr"]
+        # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+        #                                                 anneal_strategy="cos",
+        #                                                 max_lr=config["max_lr"],
+        #                                                 total_steps=config["epochs"],
+        #                                                 pct_start=config["pct_start"],
+        #                                                 div_factor=div_factor,
+        #                                                 final_div_factor=final_div_factor,
+        #                                                 verbose=True)
 
 
     ## make save dir
@@ -121,10 +123,8 @@ if __name__ == "__main__":
     
     save_config_to_yaml(config, save_path)
 
-
     early_stopping_count = 0
     patience = config["early_stopping_patience"]
-
     ## Train start
     print("\nTrain Start.")
     best_valid_loss = float("inf")
@@ -132,6 +132,7 @@ if __name__ == "__main__":
     for epoch in range(epochs):
         start_time = time.time()
 
+        current_lr = optimizer.param_groups[0]['lr']
         train_loss = train(model, train_dataloader, optimizer, loss_fn, device)
         valid_loss = eval(model, valid_dataloader, loss_fn, device)
 
@@ -139,7 +140,7 @@ if __name__ == "__main__":
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
 
         data_str = f"Epoch [{epoch+1:02}/{epochs}] | Epoch Time: {epoch_mins}m {epoch_secs}s\n"
-        # data_str += f"\tCurrent Learning Rate: {current_lr} \n"
+        data_str += f"\tCurrent Learning Rate: {current_lr} \n"
         data_str += f"\tTrain Loss: {train_loss:.4f} \n"
         data_str += f"\tValid Loss: {valid_loss:.4f} \n"
 
@@ -148,8 +149,6 @@ if __name__ == "__main__":
             best_valid_loss = valid_loss
 
             torch.save(model.state_dict(), f"{save_path}/weights/best.pth")
-            predict(epoch + 1, config, img_size=config["img_size"], model=model, device=device)
-
             early_stopping_count = 0
 
         elif valid_loss > best_valid_loss:
@@ -157,9 +156,10 @@ if __name__ == "__main__":
             early_stopping_count += 1
 
         if config["scheduler"]:
-            scheduler.step()
+            scheduler.step(valid_loss)
 
         print(data_str)
+        predict(epoch + 1, config, img_size=config["img_size"], model=model, device=device)
 
         if early_stopping_count == config["early_stopping_patience"]:
             print("Early Stop.\n")

@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torchvision.models as models
-from model.ResNet import resnet50
+from model.ResNet import resnet50, resnet101, resnet152
 
 def save_feats_mean(x):
     b, c, h, w = x.shape
@@ -146,8 +146,16 @@ class TResUnet(nn.Module):
         super().__init__()
 
         """ ResNet50 """
-        # backbone = resnet50()
-        backbone = models.resnet50(weights="IMAGENET1K_V2")
+        if backbone.lower() == "resnet50":
+            backbone = resnet50()
+            # backbone = models.resnet50(weights="IMAGENET1K_V2")
+        elif backbone.lower() == "resnet101":
+            # backbone = resnet101()
+            backbone = models.resnet101(weights="IMAGENET1K_V2")
+        elif backbone.lower() == "resnet152":
+            # backbone = resnet152()
+            backbone = models.resnet152(weights="IMAGENET1K_V2")            
+
         self.layer0 = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu)
         self.layer1 = nn.Sequential(backbone.maxpool, backbone.layer1)
         self.layer2 = backbone.layer2

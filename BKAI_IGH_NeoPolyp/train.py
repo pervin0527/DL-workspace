@@ -4,6 +4,7 @@ import yaml
 import torch
 import matplotlib.pyplot as plt
 
+from tqdm import tqdm
 from datetime import datetime
 from torch.utils.data import DataLoader
 
@@ -18,7 +19,7 @@ def eval(model, dataloader, loss_fn, device):
 
     epoch_loss = 0
     with torch.no_grad():
-        for idx, (x, y) in enumerate(dataloader):
+        for idx, (x, y) in enumerate(tqdm(dataloader, desc="Valid", unit="batch")):
             x = x.to(device, dtype=torch.float32)
             y = y.to(device, dtype=torch.float32)
 
@@ -37,7 +38,7 @@ def train(model, dataloader, optimizer, loss_fn, device):
 
     epoch_loss = 0
     epoch_acc = 0
-    for idx, (x, y) in enumerate(dataloader):
+    for idx, (x, y) in enumerate(tqdm(dataloader, desc="Train", unit="batch")):
         x = x.to(device, dtype=torch.float32)
         y = y.to(device, dtype=torch.float32)
 
@@ -62,19 +63,6 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_workers = min([os.cpu_count(), config["batch_size"] if config["batch_size"] > 1 else 0, 8])
 
-    ## make save dir
-    save_dir = config["save_dir"]
-    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    save_path = f"{save_dir}/{current_time}"
-
-    if not os.path.isdir(save_path):
-        print(save_path)
-        config["save_dir"] = save_path
-        os.makedirs(f"{save_path}/weights")
-        os.makedirs(f"{save_path}/predict")
-    
-    save_config_to_yaml(config, save_path)
-
     ## Load Dataset
     train_dataset = BKAIDataset(config["data_dir"], split="train", size=config["img_size"])
     valid_dataset = BKAIDataset(config["data_dir"], split="valid", size=config["img_size"])
@@ -87,7 +75,20 @@ if __name__ == "__main__":
     model = model.to(device)
 
     if config["pretrain_weight"] != "":
-        model.load_state_dict(torch.load(config["pretrain_weight"]))
+        saved_weights = torch.load(config["pretrain_weight"])
+
+        keys_to_remove = []
+        for key in saved_weights.keys():
+            if 'output' in key:
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            saved_weights.pop(key)
+
+        model.load_state_dict(saved_weights, strict=False)
+
+        # for name, param in model.named_parameters():
+        #     print(f"{name} {param.requires_grad}")
 
     ## Loss Function
     loss_fn = DiceLoss(num_classes=config["num_classes"], crossentropy=config["crossentropy"])
@@ -105,6 +106,21 @@ if __name__ == "__main__":
                                                         div_factor=div_factor,
                                                         final_div_factor=final_div_factor,
                                                         verbose=True)
+
+
+    ## make save dir
+    save_dir = config["save_dir"]
+    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = f"{save_dir}/{current_time}"
+
+    if not os.path.isdir(save_path):
+        print(save_path)
+        config["save_dir"] = save_path
+        os.makedirs(f"{save_path}/weights")
+        os.makedirs(f"{save_path}/predict")
+    
+    save_config_to_yaml(config, save_path)
+
 
     early_stopping_count = 0
     patience = config["early_stopping_patience"]

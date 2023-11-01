@@ -1,4 +1,4 @@
-data_dir: "/home/pervinco/Datasets/cats-in-the-wild-image-classification"
+data_dir: "/home/pervinco/Datasets/sports-classification"
 train_set: "train"
 valid_set: "valid"
 test_set: "test"
@@ -6,4 +6,4 @@ test_set: "test"
 epochs: 100
 batch_size: 32
 img_size: 224
-learning_rate: 0.00001
+learning_rate: 0.001

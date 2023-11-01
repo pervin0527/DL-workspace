@@ -33,6 +33,6 @@ class MyDataset(Dataset):
             image = self.transform(image)
 
         label = self.class_str.index(file.split('/')[-2])
-        label = one_hot(torch.tensor(label), len(self.class_str)).type(torch.float32)
+        # label = one_hot(torch.tensor(label), len(self.class_str)).type(torch.float32)
 
         return image, label

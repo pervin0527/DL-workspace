@@ -5,7 +5,6 @@ from models.layers import DepthWiseSeparableConv2d, InvertedResidual, make_divis
 class MobileNetV1(nn.Module):
     def __init__(self, num_classes=1000):
         super(MobileNetV1, self).__init__()
-        self.init_weights = init_weights
 
         self.model = nn.Sequential(nn.Conv2d(3, 32, 3, 2, 1, bias=False),
                                    nn.BatchNorm2d(32),

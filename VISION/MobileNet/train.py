@@ -7,7 +7,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 
 from dataloader import MyDataset
-from models.model import MobileNetV1
+from models.model import MobileNetV1, MobileNetV2
 
 
 def train(model, dataloader, loss_func, optimizer):
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     valid_dataloader = DataLoader(valid_dataset, batch_size=config["batch_size"])
 
     classes = train_dataset.get_classes()
-    model = MobileNetV1(num_classes=len(classes), init_weights=True)
+    model = MobileNetV2(num_classes=len(classes))
     model.to(device)
     summary(model, (3, config["img_size"], config["img_size"]), device=device.type)
 

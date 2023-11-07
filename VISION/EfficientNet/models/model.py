@@ -3,9 +3,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from models.layers import MemoryEfficientSwish, MBConvBlock, Swish
-from models.utils import (get_same_padding_conv2d, calculate_output_image_size, round_filters, round_repeats,
-                          get_model_params, efficientnet_params, load_pretrained_weights)
+from .utils import (get_same_padding_conv2d, calculate_output_image_size, round_filters, round_repeats,
+                    get_model_params, efficientnet_params, load_pretrained_weights, MBConvBlock, Swish, MemoryEfficientSwish)
 
 VALID_MODELS = ('efficientnet-b0', 'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3',
                 'efficientnet-b4', 'efficientnet-b5', 'efficientnet-b6', 'efficientnet-b7',

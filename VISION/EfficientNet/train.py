@@ -8,48 +8,52 @@ from torch.utils.data import DataLoader
 
 from data.dataloader import MyDataset
 from models.model import EfficientNet
-from utils.utils import adjust_learning_rate, accuracy, AverageMeter, ProgressMeter
 
-def train(dataloader, model, criterion, optimizer, epoch):
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
-    progress = ProgressMeter(len(dataloader), batch_time, data_time, losses, top1, top5, prefix="Epoch: [{}]".format(epoch))
+def valid(model, dataloader, loss_func):
+    model.eval()
+    valid_loss, valid_acc = 0, 0
+    
+    with torch.no_grad():
+        for X, Y in dataloader:
+            X, Y = X.to(device), Y.to(device)
+            Y_PRED = model(X)
+            loss = loss_func(Y_PRED, Y)
 
-    # switch to train mode
+            valid_loss += loss.item() * X.size(0)
+
+            _, Y_PRED = torch.max(Y_PRED, 1)
+            valid_acc += (Y_PRED == Y).sum().item()
+
+    valid_acc /= len(dataloader.dataset)
+    valid_loss /= len(dataloader.dataset)
+
+    return valid_loss, valid_acc
+
+
+def train(model, dataloader, criterion, optimizer):
     model.train()
+    train_loss, train_acc = 0, 0
+    for i, (X, Y) in enumerate(dataloader):
+        X = X.to(device)
+        Y = Y.to(device)
 
-    end = time.time()
-    for i, (images, target) in enumerate(dataloader):
-        # measure data loading time
-        data_time.update(time.time() - end)
+        Y_PRED = model(X)
+        loss = criterion(Y_PRED, Y)
 
-        images = images.to(device)
-        target = target.to(device)
-
-        # compute output
-        output = model(images)
-        loss = criterion(output, target)
-
-        # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        losses.update(loss.item(), images.size(0))
-        top1.update(acc1[0], images.size(0))
-        top5.update(acc5[0], images.size(0))
-
-        # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+        train_loss += loss.item() * X.size(0)
 
-        if i % config["print_freq"] == 0:
-            progress.print(i)
+        _, Y_PRED = torch.max(Y_PRED, 1)
+        train_acc += (Y_PRED == Y).sum().item()
+
+    train_loss /= len(dataloader.dataset)
+    train_acc = train_acc / len(dataloader.dataset)
+
+    return train_loss, train_acc
+        
 
 if __name__ == "__main__":
 
@@ -100,6 +104,9 @@ if __name__ == "__main__":
 
     epochs = config["epochs"]
     for epoch in range(start_epoch, epochs):
-         adjust_learning_rate(optimizer, epoch, config["learning_rate"])
+        train_loss, train_acc = train(model, train_dataloader, criterion, optimizer)
+        valid_loss, valid_acc = valid(model, valid_dataloader, criterion)
 
-         train(train_dataloader, model, criterion, optimizer, epoch)
+        print(f"\nEPOCH[{epoch+1} | {epochs}]")
+        print(f"Train Loss : {train_loss:.4f}, Train Acc : {train_acc:.4f}")
+        print(f"Valid Loss : {valid_loss:.4f}, Valid Acc : {valid_acc:.4f}")

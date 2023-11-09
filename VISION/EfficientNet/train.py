@@ -1,6 +1,5 @@
 import os
 import yaml
-import time
 import torch
 
 from torch import nn
@@ -8,6 +7,8 @@ from torch.utils.data import DataLoader
 
 from data.dataloader import MyDataset
 from models.model import EfficientNet
+from utils.utils import make_save_dir
+from torch.utils.tensorboard import SummaryWriter
 
 def valid(model, dataloader, loss_func):
     model.eval()
@@ -56,11 +57,15 @@ def train(model, dataloader, criterion, optimizer):
         
 
 if __name__ == "__main__":
-
     with open("config.yaml", "r") as f:
            config = yaml.safe_load(f)
 
     device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+    
+    save_path = config["save_dir"]
+    make_save_dir(save_path)
+    writer = SummaryWriter(log_dir=f"{save_path}/logs")
+
 
     model_name= config["model_name"]
     if config["pretrained"]:
@@ -69,7 +74,6 @@ if __name__ == "__main__":
     else:
         model = EfficientNet.from_name(model_name)
         print(f"=> creating model {model_name}")
-
     model = model.to(device)
     
     criterion = nn.CrossEntropyLoss()
@@ -102,11 +106,42 @@ if __name__ == "__main__":
     else:
          print(f"=> no checkpoint found at {retraining}")
 
+    EARLY_STOP_PATIENCE = config["early_stop_patience"]
+    best_acc, best_loss = 0, 0
     epochs = config["epochs"]
     for epoch in range(start_epoch, epochs):
         train_loss, train_acc = train(model, train_dataloader, criterion, optimizer)
         valid_loss, valid_acc = valid(model, valid_dataloader, criterion)
 
+        writer.add_scalar("Loss/Train", train_loss, epoch)
+        writer.add_scalar("Loss/Validation", valid_loss, epoch)
+        writer.add_scalar("Accuracy/Train", train_acc, epoch)
+        writer.add_scalar("Accuracy/Validation", valid_acc, epoch)
+
         print(f"\nEPOCH[{epoch+1} | {epochs}]")
         print(f"Train Loss : {train_loss:.4f}, Train Acc : {train_acc:.4f}")
         print(f"Valid Loss : {valid_loss:.4f}, Valid Acc : {valid_acc:.4f}")
+
+        writer.add_scalars("Loss", {"train_loss" : train_loss, "valid_loss" : valid_loss}, epoch)
+        writer.add_scalars("Accuracy", {"train_accuracy" : train_acc, "valid_accuracy" : valid_acc}, epoch)
+
+        writer.add_scalar("Learning Rate", optimizer.param_groups[0]["lr"], epoch)
+
+        if epoch == 0:
+            best_loss = valid_loss
+
+        else:
+            if valid_loss < best_loss:
+                print(f"Valid loss decreased. The minimum valid loss updated {best_loss:.4f} to {valid_loss:.4f}.")
+                best_loss = valid_loss
+                EARLY_STOP_PATIENCE = config["early_stop_patience"]
+                torch.save(model.state_dict(), f"{save_path}/weights/best_{epoch}_{valid_acc}.pth")
+            else:
+                print(f"Valid loss did not decrease. best : {best_loss:.4f} | current : {valid_loss:.4f}")
+                EARLY_STOP_PATIENCE -= 1
+                if EARLY_STOP_PATIENCE == 0:
+                    print("Early stopping patience is 0. Train stopped.")
+                    break
+
+    writer.close()
+    torch.save(model.state_dict(), f"{save_path}/weights/last_{epoch}_{valid_acc}.pth")

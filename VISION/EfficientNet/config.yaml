@@ -3,16 +3,18 @@ train_set: "train"
 valid_set: "valid"
 test_set: "test"
 
+save_dir: "/home/pervinco/Models/runs"
+
 device: "cuda:0"
 model_name: "efficientnet-b0"
 pretrained: True
 resume: False
 advprop: False
 
-print_freq: 100
 start_epoch: 0
 epochs: 100
-batch_size: 16
+batch_size: 64
 learning_rate: 0.01
 momentum: 0.9
 weight_decay: 0.0001
+early_stop_patience: 30

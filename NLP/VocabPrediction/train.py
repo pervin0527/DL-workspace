@@ -8,7 +8,7 @@ from torchtext.vocab import build_vocab_from_iterator
 
 from models.model import RNN
 from utils.util import make_dir, read_file
-from data.wikitext_dataset import download_wikitext
+from data.datasets import download_wikitext
 
 def tokenize_file(text):
     """
@@ -153,6 +153,7 @@ def generate(prompt, max_seq_len, temperature, model, tokenizer, vocab, device, 
 if __name__ == "__main__":
     data_dir = "/home/pervinco/Datasets/wikitext"
     save_dir = "/home/pervinco/Models/wikitext"
+    model_type = "LSTM"
 
     batch_size = 128
     epochs = 100
@@ -201,7 +202,7 @@ if __name__ == "__main__":
     valid_data = get_data(valid_data_tokens, vocab, batch_size) 
     test_data = get_data(test_data_tokens, vocab, batch_size)
 
-    model = RNN(vocab_size, embedding_dim, hidden_dim, num_layers, dropout_rate, tie_weights).to(device)
+    model = RNN(vocab_size, embedding_dim, hidden_dim, num_layers, dropout_rate, tie_weights, model_type).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=0)

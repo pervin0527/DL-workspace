@@ -34,7 +34,7 @@ def get_data(tokenized_data, vocab, batch_size):
     결과적으로 전체 문장들이 하나의 문장으로 모두 연결된다.
 
     데이터의 총 원소 수(numel())를 batch_size로 나누어 전체 데이터를 몇 개의 배치로 나눌 수 있는지 계산한다. 
-    이를 통해, 데이터의 길이를 배치 크기에 맞게 조정합니다. 즉, 모든 배치의 길이를 통일합니다.
+    이를 통해, 데이터의 길이를 배치 크기에 맞게 조정합니다. 즉, 모든 배치의 길이는 통일합니다.
 
     ex) 전체 데이터의 수가 2086708일 때, batch_size=128 ---> 2086708 // 128 = 16302 따라서 num_batches = 16302
     """
@@ -71,6 +71,7 @@ def train(model, data, optimizer, criterion, batch_size, seq_len, clip, device):
     특정 시퀀스 길이(seq_len)에 대해 데이터를 추가로 조정하기 위한 과정으로, 모든 배치가 지정된 시퀀스 길이에 정확히 맞도록 하여, 모델이 일관된 길이의 시퀀스를 처리하도록 한다.
     """
     num_batches = data.shape[-1] ## 16302
+    ## 데이터 텐서를 조정하여, 각 배치의 시퀀스 길이가 seq_len으로 완전히 나누어 떨어지도록 합니다. 나머지는 마지막 배치에서 잘라내야 할 추가적인 시퀀스 길이를 나타냅니다.
     data = data[:, :num_batches - (num_batches -1) % seq_len] ## [128, 16301]
     num_batches = data.shape[-1] ## 16301
 

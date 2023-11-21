@@ -7,6 +7,6 @@ def make_dir(path):
 
 def read_file(path):
     with open(path, 'r', encoding='utf-8') as f:
-        text = f.readlines()
+        text = [x.strip() for x in f.readlines() if len(x.strip()) > 0]
 
     return text

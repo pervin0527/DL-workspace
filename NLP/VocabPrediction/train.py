@@ -6,7 +6,7 @@ from tqdm import tqdm
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
-from models.model import RNN
+from models.model import LSTM
 from utils.util import make_dir, read_file
 from data.datasets import download_wikitext
 
@@ -52,14 +52,8 @@ def get_data(tokenized_data, vocab, batch_size):
 
 
 def get_batch(data, seq_len, idx):
-    """
-    idx값부터 idx + seq_len까지의 길이로 slicing을 하게 되는데,
-    - src는 처음부터 마지막 단어(seq_len)이전까지. 즉, 마지막 단어를 포함하지 않는다.
-    - target은 첫 단어를 제외한 마지막 단어를 포함한다.
-    """
-    src = data[:, idx:idx+seq_len]                   
-    target = data[:, idx+1:idx+seq_len+1]
-    
+    src = data[:, idx : idx + seq_len] ## 전체 row를 기준으로 0번째부터 50번째 column을 가져온다.                   
+    target = data[:, idx + 1 : idx + seq_len + 1] ## 전체 row를 기준으로 1번째부터 51번째 column을 가져온다.
     return src, target
 
 
@@ -68,11 +62,13 @@ def train(model, data, optimizer, criterion, batch_size, seq_len, clip, device):
     model.train()
 
     """
-    특정 시퀀스 길이(seq_len)에 대해 데이터를 추가로 조정하기 위한 과정으로, 모든 배치가 지정된 시퀀스 길이에 정확히 맞도록 하여, 모델이 일관된 길이의 시퀀스를 처리하도록 한다.
+    특정 시퀀스 길이(seq_len)에 대해 데이터를 추가로 조정하기 위한 과정으로, 
+    모든 배치가 지정된 시퀀스 길이에 정확히 맞도록 하여, 모델이 일관된 길이의 시퀀스를 처리하도록 한다.
     """
     num_batches = data.shape[-1] ## 16302
-    ## 데이터 텐서를 조정하여, 각 배치의 시퀀스 길이가 seq_len으로 완전히 나누어 떨어지도록 합니다. 나머지는 마지막 배치에서 잘라내야 할 추가적인 시퀀스 길이를 나타냅니다.
-    data = data[:, :num_batches - (num_batches -1) % seq_len] ## [128, 16301]
+    ## 각 배치의 시퀀스 길이가 seq_len으로 완전히 나누어 떨어지도록 조정. 
+    ## 나눗셈의 나머지는 마지막 배치에서 잘라내야 할 추가적인 시퀀스 길이를 나타낸다.
+    data = data[:, :num_batches - (num_batches - 1) % seq_len] ## [128, 16301]
     num_batches = data.shape[-1] ## 16301
 
     hidden = model.init_hidden(batch_size, device)
@@ -84,10 +80,10 @@ def train(model, data, optimizer, criterion, batch_size, seq_len, clip, device):
         src, target = get_batch(data, seq_len, idx) ## [128, 50], [128, 50]
         src, target = src.to(device), target.to(device)
         batch_size = src.shape[0]
-        prediction, hidden = model(src, hidden)
+        prediction, hidden = model(src, hidden) ## [128, 50, 28783]
 
-        prediction = prediction.reshape(batch_size * seq_len, -1)   
-        target = target.reshape(-1)
+        prediction = prediction.reshape(batch_size * seq_len, -1)   ## [6400, 28783]
+        target = target.reshape(-1) ## [6400]
         loss = criterion(prediction, target)
         
         loss.backward()
@@ -128,14 +124,14 @@ def generate(prompt, max_seq_len, temperature, model, tokenizer, vocab, device, 
         torch.manual_seed(seed)
     model.eval()
     tokens = tokenizer(prompt)
-    indices = [vocab[t] for t in tokens]
+    indices = [vocab[t] for t in tokens] ## 토큰들을 기반으로 index 리스트를 만든다.
     batch_size = 1
     hidden = model.init_hidden(batch_size, device)
     with torch.no_grad():
-        for i in range(max_seq_len):
+        for i in range(max_seq_len): ## 최대 max_seq_len을 초과하지 않도록 설정.
             src = torch.LongTensor([indices]).to(device)
-            prediction, hidden = model(src, hidden)
-            probs = torch.softmax(prediction[:, -1] / temperature, dim=-1)
+            prediction, hidden = model(src, hidden) ## prediction [1, seq_len, vocab_size]
+            probs = torch.softmax(prediction[:, -1] / temperature, dim=-1) ## 마지막 seq_len을 선택한다.
             prediction = torch.multinomial(probs, num_samples=1).item()
             
             while prediction == vocab['<unk>']:
@@ -154,12 +150,12 @@ def generate(prompt, max_seq_len, temperature, model, tokenizer, vocab, device, 
 if __name__ == "__main__":
     data_dir = "/home/pervinco/Datasets/wikitext"
     save_dir = "/home/pervinco/Models/wikitext"
-    model_type = "LSTM"
 
+    seq_len = 50
+    epochs = 5000
     batch_size = 128
-    epochs = 100
     learning_rate = 0.001
-    
+
     embedding_dim = 1024
     hidden_dim = 1024
     num_layers = 2
@@ -185,6 +181,7 @@ if __name__ == "__main__":
     train_text = read_file(train_file)
     valid_text = read_file(valid_file)
     test_text = read_file(test_file)
+    print(len(train_text), len(valid_text), len(test_text))
 
     ## Tokenize
     tokenizer = get_tokenizer('basic_english')
@@ -203,7 +200,7 @@ if __name__ == "__main__":
     valid_data = get_data(valid_data_tokens, vocab, batch_size) 
     test_data = get_data(test_data_tokens, vocab, batch_size)
 
-    model = RNN(vocab_size, embedding_dim, hidden_dim, num_layers, dropout_rate, tie_weights, model_type).to(device)
+    model = LSTM(vocab_size, embedding_dim, hidden_dim, num_layers, dropout_rate, tie_weights).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=0)
@@ -219,8 +216,7 @@ if __name__ == "__main__":
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f'{save_dir}/best.pt')
 
-        print(f'\tTrain Perplexity: {math.exp(train_loss):.3f}')
-        print(f'\tValid Perplexity: {math.exp(valid_loss):.3f}')
+        print(f"Epoch : {epoch+1} | Train Prep : {math.exp(train_loss):.3f}, | Valid Pred : {math.exp(valid_loss):.3f}")
 
     prompt = 'Think about'
     max_seq_len = 30

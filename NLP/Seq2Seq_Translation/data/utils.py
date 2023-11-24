@@ -1,4 +1,5 @@
 import os
+import random
 import warnings
 import pandas as pd
 
@@ -8,7 +9,33 @@ from torchtext.vocab import build_vocab_from_iterator
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 
-def get_total_data(data_dir):
+def split_data(list1, list2, train_frac=0.7, valid_frac=0.15):
+    # 데이터 길이 확인
+    assert len(list1) == len(list2) == 1402407
+
+    # 데이터 쌍을 만듦 (연관된 데이터 유지)
+    combined = list(zip(list1, list2))
+
+    # 데이터 섞기
+    random.shuffle(combined)
+
+    # 다시 분할
+    list1, list2 = zip(*combined)
+
+    # 각 세트의 크기 계산
+    total_size = len(list1)
+    train_size = int(total_size * train_frac)
+    valid_size = int(total_size * valid_frac)
+
+    # 데이터를 train, valid, test로 분할
+    train_data = (list1[:train_size], list2[:train_size])
+    valid_data = (list1[train_size:train_size+valid_size], list2[train_size:train_size+valid_size])
+    test_data = (list1[train_size+valid_size:], list2[train_size+valid_size:])
+
+    return train_data, valid_data, test_data
+
+
+def get_total_data(data_dir, reverse=False):
     if os.path.isfile(f"{data_dir}/total_data.csv"):
         print("total_data.csv exist.")
         df = pd.read_csv(f"{data_dir}/total_data.csv")
@@ -25,7 +52,12 @@ def get_total_data(data_dir):
         df.to_csv(f'{data_dir}/total_data.csv', index=False, encoding='utf-8-sig')
         print("total_data.csv generated.")
 
-    return df
+    if not reverse:
+        total_data = [df["원문"].tolist(), df["번역문"].tolist()]
+    else:
+        total_data = [df["번역문"].tolist(), df["원문"].tolist()]
+
+    return total_data
 
 
 def insert_tokens(arr):

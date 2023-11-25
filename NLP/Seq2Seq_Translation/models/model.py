@@ -74,7 +74,7 @@ class Seq2Seq(nn.Module):
         trg : [trg_length, batch_size]
         outputs : tensor to store decoder outputs
         """
-        batch_size, trg_len = trg.shape[0], trg.shape[1]
+        batch_size, trg_len = trg.shape[1], trg.shape[0]
         trg_vocab_size = self.decoder.output_dim
         
         outputs = torch.zeros(trg_len, batch_size, trg_vocab_size).to(self.device)        
@@ -87,8 +87,8 @@ class Seq2Seq(nn.Module):
             output, hidden, cell = self.decoder(input, hidden, cell) ## output : [batch_size, seq_len]
             
             ## place predictions in a tensor holding predictions for each token
-            # outputs[t] = output
-            output = output.squeeze(0)
+            outputs[t] = output
+            # output = output.squeeze(0)
             
             ## decide if we are going to use teacher forcing or not
             teacher_force = random.random() < teacher_forcing_ratio
@@ -101,30 +101,3 @@ class Seq2Seq(nn.Module):
             input = trg[t] if teacher_force else top1
         
         return outputs
-
-
-if __name__ == "__main__":
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    encoder = Encoder(input_dim=10, embedd_dim=256, hidden_dim=512, num_layers=2, dropout=0.5).to(device)
-    decoder = Decoder(output_dim=10, embedd_dim=256, hidden_dim=512, num_layers=2, dropout=0.5).to(device)
-
-    src = torch.randint(low=0, high=10, size=(20, 32)).to(device) # src_length=20, batch_size=32
-    trg = torch.randint(low=0, high=10, size=(20, 32)).to(device) # trg_length=1 for single step, batch_size=32
-
-    hidden, cell = encoder(src) ## [num_layers, batch_size, hidden_dim], [num_layers, batch_size, hidden_dim]
-    print(hidden.shape, cell.shape)
-
-    input = trg[0,:]
-    prediction, hidden, cell = decoder(input, hidden, cell)
-    print(prediction.shape, hidden.shape, cell.shape)
-
-    seq2seq_model = Seq2Seq(encoder, decoder, device).to(device)
-
-    # 더미 소스(src) 및 타겟(trg) 텐서 생성
-    src = torch.randint(0, 10, (20, 32)).to(device) # src_length=20, batch_size=32
-    trg = torch.randint(0, 10, (10, 32)).to(device) # trg_length=10, batch_size=32
-
-    # 모델 실행 및 출력 텐서의 크기 확인
-    outputs = seq2seq_model(src, trg)
-    print(outputs.shape)

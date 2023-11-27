@@ -4,42 +4,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import time
 import math
 import torch
-import spacy
 
-
-from torch import nn
 from tqdm import tqdm
-from konlpy.tag import Mecab
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, DataLoader
-from torchtext.vocab import build_vocab_from_iterator
+from torch import nn
+
+from torch.utils.data import DataLoader
+from torchtext.data.utils import get_tokenizer
 
 from data.utils import get_total_data, split_data
-from data.dataset import TranslationDataset
 from models.model import Seq2Seq, Encoder, Decoder
-
-def init_weights(m):
-    for name, param in m.named_parameters():
-        nn.init.uniform_(param.data, -0.08, 0.08)
-
-
-def tokenize_ko(text):
-    return [tok for tok in ko_tokenizer.morphs(text)]
-
-
-def tokenize_en(text):
-    return [tok.text for tok in en_tokenizer.tokenizer(text)]
-
-
-def build_vocab(data_iter, tokenizer):
-    vocab = build_vocab_from_iterator(map(tokenizer, data_iter), specials=["<pad>", "<sos>", "<eos>", "<unk>"], min_freq=2)
-    vocab.set_default_index(vocab['<unk>'])
-
-    return vocab
-
-
-def tokens_to_indices(tokens, vocab):
-    return [vocab[token] for token in tokens]
+from data.dataset import TranslationDataset, collate_fn, build_vocab, text_transform
 
 
 def epoch_time(start_time, end_time):
@@ -99,61 +73,56 @@ def train(model, iterator, optimizer, criterion, clip):
 
 if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     DATA_DIR = "/home/pervinco/Datasets/KORENG"
     SAVE_DIR = "/home/pervinco/Models/KORENG"
-    
+    TRAIN_RATIO = 0.8
+
     EPOCHS = 100
-    BATCH_SIZE = 32
-    LEARNING_RATE = 0.001
+    BATCH_SIZE = 64
+    LEARNING_RATE = 0.01
     CLIP = 1
 
     if not os.path.isdir(SAVE_DIR):
         os.makedirs(SAVE_DIR)
 
-    ## Define Tokenizer
-    ko_tokenizer = Mecab()
-    en_tokenizer = spacy.load('en_core_web_sm')
-
-    ## Load total dataset
     print("Load Dataset")
     dataset = get_total_data(DATA_DIR, reverse=False) ## Default : ko -> en
+    kor_sentences, eng_sentences = dataset[0][:10000], dataset[1][:10000]
+    print(f"Total Sentences | SRC : {len(kor_sentences)}, TRG : {len(eng_sentences)}\n")
 
-    src_sentences, trg_sentences = dataset[0][:10000], dataset[1][:10000]
-    print(f"Total Sentences | SRC : {len(src_sentences)}, TRG : {len(trg_sentences)}\n")
-
-    ## Tokeinze & Build Vocabs
     print("Building Vocabs...")
-    src_vocabs = build_vocab(src_sentences, tokenize_ko)
-    trg_vocabs = build_vocab(trg_sentences, tokenize_en)
-    print(f"Vocabs | SRC : {len(src_vocabs)}, TRG : {len(trg_vocabs)}\n")
+    kor_tokenizer = get_tokenizer('spacy', language='ko_core_news_sm')
+    eng_tokenizer = get_tokenizer('spacy', language='en_core_web_sm')
+    kor_vocabs = build_vocab(kor_sentences, kor_tokenizer)
+    eng_vocabs = build_vocab(eng_sentences, eng_tokenizer)
+    print(f"Vocabs | SRC : {len(kor_vocabs)}, TRG : {len(eng_vocabs)}\n")
 
     print("Convert Tokenized List to Indices List...")
-    src_indices = [tokens_to_indices(tokens, src_vocabs) for tokens in src_sentences]
-    trg_indices = [tokens_to_indices(tokens, trg_vocabs) for tokens in trg_sentences]
-    print("Done.\n")
+    kor_indices = [text_transform(sentence, kor_tokenizer, kor_vocabs) for sentence in kor_sentences]
+    eng_indices = [text_transform(sentence, eng_tokenizer, eng_vocabs) for sentence in eng_sentences]
+    print(f"Indices | SRC : {len(kor_indices)}, TRG : {len(eng_indices)}\n")
 
     ## Split Dataset
     print("Data Split -> Train / Valid / TEST")
-    train_data, valid_data, test_data = split_data(src_indices, trg_indices, train_frac=0.8, valid_frac=0.1)
+    train_data, valid_data, test_data = split_data(kor_indices, eng_indices, train_frac=0.8, valid_frac=0.1)
     print(f"Train Dataset | SRC : {len(train_data[0])}, TRG : {len(train_data[1])}")
     print(f"Valid Dataset | SRC : {len(valid_data[0])}, TRG : {len(valid_data[1])}")
     print(f"Test Dataset | SRC : {len(test_data[0])}, TRG : {len(test_data[1])}\n")
-
 
     ## Define Torch Dataset & DataLoader
     train_dataset = TranslationDataset(train_data)
     valid_dataset = TranslationDataset(valid_data)
     test_dataset = TranslationDataset(test_data)
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=train_dataset.collate_fn)
-    valid_loader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, collate_fn=valid_dataset.collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, collate_fn=test_dataset.collate_fn)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
 
     ## Encoder, Decoder Params
-    INPUT_DIM = len(src_vocabs)
-    OUTPUT_DIM = len(trg_vocabs)
-    EMBEDD_DIM = 1024
-    HIDDEN_DIM = 2048
+    INPUT_DIM = len(kor_vocabs)
+    OUTPUT_DIM = len(eng_vocabs)
+    EMBEDD_DIM = 512
+    HIDDEN_DIM = 1024
     NUM_LAYERS = 4
     ENCODER_DROPOUT = 0.5
     DECODER_DROPOUT = 0.5
@@ -162,23 +131,19 @@ if __name__ == "__main__":
     encoder = Encoder(input_dim=INPUT_DIM, embedd_dim=EMBEDD_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, dropout=ENCODER_DROPOUT)
     decoder = Decoder(output_dim=OUTPUT_DIM, embedd_dim=EMBEDD_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, dropout=DECODER_DROPOUT)
     model = Seq2Seq(encoder, decoder, DEVICE).to(DEVICE)
-    model.apply(init_weights)
 
     ## Optimizer & Loss function
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
-    trg_pad_idx = trg_vocabs.get_itos().index("<pad>")
+    trg_pad_idx = eng_vocabs.get_itos().index("<pad>")
     criterion = nn.CrossEntropyLoss(ignore_index=trg_pad_idx)
 
     ## Train Loop
     best_valid_loss = float('inf')
-
     for epoch in range(EPOCHS):
-        
         start_time = time.time()
         
-        train_loss = train(model, train_loader, optimizer, criterion, CLIP)
-        valid_loss = evaluate(model, valid_loader, criterion)
+        train_loss = train(model, train_dataloader, optimizer, criterion, CLIP)
+        valid_loss = evaluate(model, valid_dataloader, criterion)
         
         end_time = time.time()
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
@@ -189,8 +154,4 @@ if __name__ == "__main__":
         
         print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
         print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
-        print(f'\tValid Loss: {valid_loss:.3f} | Valid PPL: {math.exp(valid_loss):7.3f}')
-
-    model.load_state_dict(torch.load(f'{SAVE_DIR}/best-koen.pt'))
-    test_loss = evaluate(model, test_loader, criterion)
-    print(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} |')
+        print(f'\tValid Loss: {valid_loss:.3f} | Valid PPL: {math.exp(valid_loss):7.3f}\n')

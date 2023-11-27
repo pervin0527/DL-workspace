@@ -2,6 +2,10 @@ import random
 import torch
 import torch.nn as nn
 
+def init_weights(m):
+    for name, param in m.named_parameters():
+        nn.init.normal_(param.data, mean=0, std=0.01)
+
 class Encoder(nn.Module):
     def __init__(self, input_dim, embedd_dim, hidden_dim, num_layers, dropout):
         super().__init__()
@@ -100,4 +104,74 @@ class Seq2Seq(nn.Module):
             ## if teacher forcing, use actual next token as next input
             input = trg[t] if teacher_force else top1
         
+        return outputs
+    
+
+class EncoderGRU(nn.Module):
+    def __init__(self, input_dim, embedd_dim, hidden_dim, dropout):
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.embedding = nn.Embedding(input_dim, embedd_dim)
+        self.rnn = nn.GRU(embedd_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src):
+        embedded = self.dropout(self.embedding(src))
+        outputs, hidden_state = self.rnn(embedded)
+
+        return hidden_state
+
+class DecoderGRU(nn.Module):
+    def __init__(self, output_dim, embedd_dim, hidden_dim, dropout):
+        super().__init__()
+        
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.embedding = nn.Embedding(output_dim, embedd_dim)
+        self.rnn = nn.GRU(embedd_dim + hidden_dim, hidden_dim)
+        self.out = nn.Linear(embedd_dim + hidden_dim * 2, output_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, input, hidden, context):
+        input = input.unsqueeze(0)
+        embedded = self.dropout(self.embedding(input))
+
+        concat = torch.cat((embedded, context), dim=2)
+        output, hidden = self.rnn(concat, hidden)
+
+        output = torch.cat((embedded.squeeze(0), hidden.squeeze(0), context.squeeze(0)), dim=1)
+        prediction = self.out(output)
+
+        return prediction, hidden
+    
+
+class Seq2SeqGRU(nn.Module):
+    def __init__(self, encoder, decoder, device):
+        super().__init__()
+        
+        self.encoder = encoder
+        self.decoder = decoder
+        self.device = device
+        
+        assert encoder.hidden_dim == decoder.hidden_dim, "Hidden dimensions of encoder and decoder must be equal!"
+        
+    def forward(self, src, trg, teacher_forcing_ratio = 0.5):       
+        batch_size = trg.shape[1]
+        trg_len = trg.shape[0]
+        trg_vocab_size = self.decoder.output_dim
+        
+        outputs = torch.zeros(trg_len, batch_size, trg_vocab_size).to(self.device)        
+        context = self.encoder(src)        
+        hidden = context
+        
+        input = trg[0,:]
+        for t in range(1, trg_len):
+            output, hidden = self.decoder(input, hidden, context)
+            outputs[t] = output
+            
+            teacher_force = random.random() < teacher_forcing_ratio
+            top1 = output.argmax(1) 
+            input = trg[t] if teacher_force else top1
+
         return outputs

@@ -5,7 +5,7 @@ from torchtext.vocab import build_vocab_from_iterator
 
 def build_vocab(texts, tokenizer):
     tokenized_texts = map(tokenizer, texts)
-    vocab = build_vocab_from_iterator(tokenized_texts, specials=['<unk>', '<pad>', '<sos>', '<eos>'], max_tokens=3)
+    vocab = build_vocab_from_iterator(tokenized_texts, specials=['<unk>', '<pad>', '<sos>', '<eos>'], min_freq=2)
     vocab.set_default_index(vocab['<unk>'])
 
     return vocab
@@ -27,7 +27,7 @@ class TranslationDataset(Dataset):
 
     def __getitem__(self, idx):
         src_tensor = torch.tensor(self.src_indices[idx], dtype=torch.long)
-        trg_tensor = torch.tensor(self.trg_indices[idx][::-1], dtype=torch.long)
+        trg_tensor = torch.tensor(self.trg_indices[idx], dtype=torch.long)
 
         return src_tensor, trg_tensor
     

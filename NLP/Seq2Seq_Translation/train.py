@@ -88,7 +88,8 @@ if __name__ == "__main__":
 
     print("Load Dataset")
     dataset = get_total_data(DATA_DIR, reverse=False) ## Default : ko -> en
-    kor_sentences, eng_sentences = dataset[0][:10000], dataset[1][:10000]
+    kor_sentences, eng_sentences = dataset[0], dataset[1]
+    kor_sentences, eng_sentences = kor_sentences[:10000], eng_sentences[:10000]
     print(f"Total Sentences | SRC : {len(kor_sentences)}, TRG : {len(eng_sentences)}\n")
 
     print("Building Vocabs...")
@@ -121,11 +122,11 @@ if __name__ == "__main__":
     ## Encoder, Decoder Params
     INPUT_DIM = len(kor_vocabs)
     OUTPUT_DIM = len(eng_vocabs)
-    EMBEDD_DIM = 512
-    HIDDEN_DIM = 1024
-    NUM_LAYERS = 4
-    ENCODER_DROPOUT = 0.5
-    DECODER_DROPOUT = 0.5
+    EMBEDD_DIM = 256
+    HIDDEN_DIM = 512
+    NUM_LAYERS = 3
+    ENCODER_DROPOUT = 0.2
+    DECODER_DROPOUT = 0.2
 
     ## Define Model
     encoder = Encoder(input_dim=INPUT_DIM, embedd_dim=EMBEDD_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, dropout=ENCODER_DROPOUT)

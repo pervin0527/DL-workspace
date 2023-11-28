@@ -204,8 +204,9 @@ class Attention(nn.Module):
         batch_size = encoder_outputs.shape[1]
         src_len = encoder_outputs.shape[0]
 
-        hidden_state = hidden_state.unsqueeze(1).repeat(1, src_len, 1)
-        encoder_outputs = encoder_outputs.permute(1, 0, 2)
+        ## 각 hidden state를 src_len차원에 맞추기 위함.
+        hidden_state = hidden_state.unsqueeze(1).repeat(1, src_len, 1) ## (batch_size, hidden_dim) -> (batch_size, 1, hidden_dim) -> 두번째 차원을 src_len만큼 반복 -> (batch_size, src_len, hidden_dim)
+        encoder_outputs = encoder_outputs.permute(1, 0, 2) ## (src_len, batch_size, hidden_dim)
 
         energy = torch.tanh(self.attn(torch.cat((hidden_state, encoder_outputs), dim=2)))
         attention = self.v(energy).squeeze(2)
@@ -228,15 +229,15 @@ class AttentionDecoder(nn.Module):
         input = input.unsqueeze(0)
         embedded = self.dropout(self.embedding(input))
 
-        a = self.attention(hidden, encoder_outputs)
+        a = self.attention(hidden, encoder_outputs) ## s_{t-1}과 encoder cell의 hidden state들을 이용해 attention value를 계산.
         a = a.unsqueeze(1)
 
         encoder_outputs = encoder_outputs.permute(1, 0, 2)
 
-        weighted = torch.bmm(a, encoder_outputs)
+        weighted = torch.bmm(a, encoder_outputs) ## weighted sum
         weighted = weighted.permute(1, 0, 2)
 
-        rnn_input = torch.cat((embedded, weighted), dim = 2)
+        rnn_input = torch.cat((embedded, weighted), dim = 2) ## concat attention value & current decoder cell hidden state
         output, hidden = self.rnn(rnn_input, hidden.unsqueeze(0))
 
         assert (output == hidden).all()

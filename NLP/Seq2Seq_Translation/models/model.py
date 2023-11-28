@@ -248,6 +248,7 @@ class AttentionDecoder(nn.Module):
                 
         return prediction, hidden.squeeze(0)
 
+
 class AttentionSeq2Seq(nn.Module):
     def __init__(self, encoder, decoder, device):
         super().__init__()

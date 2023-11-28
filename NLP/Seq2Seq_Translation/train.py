@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from torchtext.data.utils import get_tokenizer
 
 from data.utils import get_total_data, split_data
-from models.model import init_weights, Encoder, Decoder, Seq2Seq, EncoderGRU, DecoderGRU, Seq2SeqGRU
+from models.model import init_weights, Encoder, Decoder, Seq2Seq, EncoderGRU, DecoderGRU, Seq2SeqGRU, EncoderBidGRU, AttentionDecoder, Attention, AttentionSeq2Seq
 from data.dataset import TranslationDataset, collate_fn, build_vocab, text_transform
 
 
@@ -120,22 +120,36 @@ if __name__ == "__main__":
     valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
 
     ## Encoder, Decoder Params
-    INPUT_DIM = len(kor_vocabs)
-    OUTPUT_DIM = len(eng_vocabs)
-    EMBEDD_DIM = 256
-    HIDDEN_DIM = 512
-    NUM_LAYERS = 3
-    ENCODER_DROPOUT = 0.2
-    DECODER_DROPOUT = 0.2
+    # INPUT_DIM = len(kor_vocabs)
+    # OUTPUT_DIM = len(eng_vocabs)
+    # EMBEDD_DIM = 256
+    # HIDDEN_DIM = 512
+    # NUM_LAYERS = 3
+    # ENCODER_DROPOUT = 0.2
+    # DECODER_DROPOUT = 0.2
 
     ## Define Model
     # encoder = Encoder(input_dim=INPUT_DIM, embedd_dim=EMBEDD_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, dropout=ENCODER_DROPOUT)
     # decoder = Decoder(output_dim=OUTPUT_DIM, embedd_dim=EMBEDD_DIM, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, dropout=DECODER_DROPOUT)
     # model = Seq2Seq(encoder, decoder, DEVICE).to(DEVICE)
 
-    encoder = EncoderGRU(INPUT_DIM, EMBEDD_DIM, HIDDEN_DIM, ENCODER_DROPOUT)
-    decoder = DecoderGRU(OUTPUT_DIM, EMBEDD_DIM, HIDDEN_DIM, DECODER_DROPOUT)
-    model = Seq2SeqGRU(encoder, decoder, DEVICE).to(DEVICE)
+    # encoder = EncoderGRU(INPUT_DIM, EMBEDD_DIM, HIDDEN_DIM, ENCODER_DROPOUT)
+    # decoder = DecoderGRU(OUTPUT_DIM, EMBEDD_DIM, HIDDEN_DIM, DECODER_DROPOUT)
+    # model = Seq2SeqGRU(encoder, decoder, DEVICE).to(DEVICE)
+
+    INPUT_DIM = len(kor_vocabs)
+    OUTPUT_DIM = len(eng_vocabs)
+    ENC_EMB_DIM = 256
+    DEC_EMB_DIM = 256
+    ENC_HID_DIM = 512
+    DEC_HID_DIM = 512
+    ENC_DROPOUT = 0.5
+    DEC_DROPOUT = 0.5
+
+    attn = Attention(ENC_HID_DIM, DEC_HID_DIM)
+    enc = EncoderBidGRU(INPUT_DIM, ENC_EMB_DIM, ENC_HID_DIM, DEC_HID_DIM, ENC_DROPOUT)
+    dec = AttentionDecoder(OUTPUT_DIM, DEC_EMB_DIM, ENC_HID_DIM, DEC_HID_DIM, DEC_DROPOUT, attn)
+    model = AttentionSeq2Seq(enc, dec, DEVICE).to(DEVICE)
     model.apply(init_weights)
 
     ## Optimizer & Loss function

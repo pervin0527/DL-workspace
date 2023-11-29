@@ -4,7 +4,6 @@ import warnings
 import pandas as pd
 
 from glob import glob
-from torchtext.vocab import build_vocab_from_iterator
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 

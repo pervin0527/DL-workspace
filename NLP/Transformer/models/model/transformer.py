@@ -54,26 +54,40 @@ class Transformer(nn.Module):
 
 
     def make_pad_mask(self, query, key, pad_idx=1):
-        # query: (n_batch, query_seq_len)
-        # key: (n_batch, key_seq_len)
-        query_seq_len, key_seq_len = query.size(1), key.size(1)
+        """
+        Padding Mask
+            query: (n_batch, query_seq_len)
+            key: (n_batch, key_seq_len)
+        """
 
+        query_seq_len, key_seq_len = query.size(1), key.size(1) ## query_seq_len, key_seq_len
+
+        ## ne : pad_idx가 아닌 원소들을 찾아 True/False인 텐서를 만든다.
         key_mask = key.ne(pad_idx).unsqueeze(1).unsqueeze(2)  # (n_batch, 1, 1, key_seq_len)
+
+        ## 세번째 차원을 쿼리 시퀀스 길이에 맞춰 반복해서 쌓는다.
         key_mask = key_mask.repeat(1, 1, query_seq_len, 1)    # (n_batch, 1, query_seq_len, key_seq_len)
 
+        ## ne : pad_idx가 아닌 원소들을 찾아 True/False인 텐서를 만든다.
         query_mask = query.ne(pad_idx).unsqueeze(1).unsqueeze(3)  # (n_batch, 1, query_seq_len, 1)
         query_mask = query_mask.repeat(1, 1, 1, key_seq_len)  # (n_batch, 1, query_seq_len, key_seq_len)
 
-        mask = key_mask & query_mask
+        mask = key_mask & query_mask ## 두 행렬에서 True인 원소만 True로.
         mask.requires_grad = False
 
         return mask
 
 
     def make_subsequent_mask(self, query, key):
+        """
+        Look-Ahead Mask
+            query : (batch_size, query_seq_len)
+            key : (batch_size, key_seq_len)
+        """
         query_seq_len, key_seq_len = query.size(1), key.size(1)
 
+        ## shape이 query_seq_len, key_seq_len인 lower-triangular matrix를 만든다. k는 주대각원소의 위쪽에 있는 원소값.
         tril = np.tril(np.ones((query_seq_len, key_seq_len)), k=0).astype('uint8') # lower triangle without diagonal
-        mask = torch.tensor(tril, dtype=torch.bool, requires_grad=False, device=query.device)
+        mask = torch.tensor(tril, dtype=torch.bool, requires_grad=False, device=query.device) ## boolean type의 텐서로 변환.
 
         return mask

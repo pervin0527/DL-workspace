@@ -13,7 +13,7 @@ class MultiHeadAttentionLayer(nn.Module):
         self.q_fc = nn.Linear(d_embed, d_model) # (d_embed, d_model)
         self.k_fc = nn.Linear(d_embed, d_model) # (d_embed, d_model)
         self.v_fc = nn.Linear(d_embed, d_model) # (d_embed, d_model)
-        self.out_fc = nn.Linear(d_embed, d_model) # (d_embed, d_model)              # (d_model, d_embed)
+        self.out_fc = nn.Linear(d_embed, d_model) # (d_embed, d_model)
         self.dropout = nn.Dropout(p=drop_prob)
 
 

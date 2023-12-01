@@ -18,8 +18,9 @@ class MultiHeadAttentionLayer(nn.Module):
 
 
     def calculate_attention(self, query, key, value, mask):
-        # query, key, value: (n_batch, num_heads, seq_len, d_k)
-        # mask: (n_batch, seq_len, seq_len)
+        ## Encoder Input : (batch_size, seq_len, d_model) ---> convert Q, K, V
+        ## Q, K, V: (batch_size, num_heads, seq_len, d_k)
+        ## Padding Mask : (batch_size, seq_len, seq_len)
         d_k = key.shape[-1]
         attention_score = torch.matmul(query, key.transpose(-2, -1)) # Q x K^T, (n_batch, num_heads, seq_len, seq_len)
         attention_score = attention_score / math.sqrt(d_k)

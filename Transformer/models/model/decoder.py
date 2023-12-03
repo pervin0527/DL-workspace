@@ -26,7 +26,7 @@ class Decoder(nn.Module):
         trg_mask : Look-Ahead Mask + Pad Mask가 적용된 TRG Sequence
         src_mask : Pad Mask가 적용된 SRC Sequence. Context에도 Pad Mask를 적용.
         """
-        trg = self.emb(trg)
+        trg = self.embedd(trg)
 
         for layer in self.layers:
             trg = layer(trg, enc_src, trg_mask, src_mask)

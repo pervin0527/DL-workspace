@@ -5,12 +5,12 @@ from models.layers.position_wise_feed_forward import PositionwiseFeedForward
 
 class EncoderBlock(nn.Module):
     def __init__(self, d_model, ff_hidden, num_heads, drop_prob):
-        super(EncoderBlock)
+        super(EncoderBlock, self).__init__()
         self.attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
         self.norm1 = LayerNorm(d_model=d_model)
         self.dropout1 = nn.Dropout(p=drop_prob)
 
-        self.pwff = PositionwiseFeedForward(d_model=d_model, hidden_dim=ff_hidden, drop_prob=drop_prob)
+        self.pwff = PositionwiseFeedForward(d_model=d_model, hidden=ff_hidden, drop_prob=drop_prob)
         self.norm2 = LayerNorm(d_model=d_model)
         self.dropout2 = nn.Dropout(p=drop_prob)
 

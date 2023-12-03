@@ -1,7 +1,7 @@
 from torch import nn
 from models.layers.scale_dot_product_attention import ScaleDotProductAttention
 
-class MultiHeadAttention(nn.Moduke):
+class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super(MultiHeadAttention, self).__init__()
         self.num_heads = num_heads
@@ -45,6 +45,8 @@ class MultiHeadAttention(nn.Moduke):
         d_model = num_heads * d_k
 
         tensor = tensor.transpose(1, 2).contiguous().view(batch_size, seq_len, d_model)
+
+        return tensor
 
 
     def forward(self, q, k, v, mask=None):

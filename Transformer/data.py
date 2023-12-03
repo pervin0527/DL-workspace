@@ -17,12 +17,13 @@ class Multi30kDataset:
     UNK_IDX, PAD_IDX, SOS_IDX, EOS_IDX = 0, 1, 2, 3
     special_symbols = ["<unk>", "<pad>", "<sos>", "<eos>"]
 
-    def __init__(self, ext, tokenize_en, tokenize_de, sos_token, eos_token, batch_size, batch_first, device):
+    def __init__(self, ext, tokenize_en, tokenize_de, sos_token, eos_token, max_seq_len, batch_size, batch_first, device):
         self.ext = ext
         self.tokenize_en = tokenize_en
         self.tokenize_de = tokenize_de
         self.sos_token = sos_token
         self.eos_token = eos_token
+        self.max_seq_len = max_seq_len
         self.batch_size = batch_size
         self.batch_first = batch_first
         self.device = device
@@ -53,10 +54,22 @@ class Multi30kDataset:
     
 
     def build_vocab(self):
-        self.src_vocab = build_vocab_from_iterator(map(lambda x: self.tokenizer_src(x[0]), self.train_data), specials=self.special_symbols)
-        self.trg_vocab = build_vocab_from_iterator(map(lambda x: self.tokenizer_trg(x[1]), self.train_data), specials=self.special_symbols)
+        self.src_vocab = build_vocab_from_iterator(map(lambda x: self.tokenizer_src(x[0]), self.train_data), specials=self.special_symbols, min_freq=2)
+        self.trg_vocab = build_vocab_from_iterator(map(lambda x: self.tokenizer_trg(x[1]), self.train_data), specials=self.special_symbols, min_freq=2)
         self.src_vocab.set_default_index(self.src_vocab[self.sos_token])
         self.trg_vocab.set_default_index(self.trg_vocab[self.sos_token])
+
+
+    def _pad_or_truncate(self, seq, max_len):
+        if len(seq) > max_len:
+            # 최대 길이보다 긴 시퀀스는 잘라냅니다.
+            return seq[:max_len]
+        elif len(seq) < max_len:
+            # 최대 길이보다 짧은 시퀀스는 PAD_IDX로 패딩합니다.
+            padding = torch.full((max_len - len(seq),), self.PAD_IDX, dtype=torch.long)
+            return torch.cat((seq, padding), dim=0)
+        else:
+            return seq
 
 
     def collate_fn(self, batch):
@@ -68,8 +81,11 @@ class Multi30kDataset:
             src_batch.append(torch.cat((torch.tensor([self.src_vocab[self.sos_token]]), torch.tensor([self.src_vocab[token] for token in src_tokenized]), torch.tensor([self.src_vocab[self.eos_token]]))))
             trg_batch.append(torch.cat((torch.tensor([self.trg_vocab[self.sos_token]]), torch.tensor([self.trg_vocab[token] for token in trg_tokenized]), torch.tensor([self.trg_vocab[self.eos_token]]))))
 
-        src_batch = pad_sequence(src_batch, padding_value=self.PAD_IDX)
-        trg_batch = pad_sequence(trg_batch, padding_value=self.PAD_IDX)
+        src_batch = [self._pad_or_truncate(seq, self.max_seq_len) for seq in src_batch]
+        trg_batch = [self._pad_or_truncate(seq, self.max_seq_len) for seq in trg_batch]
+
+        src_batch = pad_sequence(src_batch, padding_value=self.PAD_IDX, batch_first=True)
+        trg_batch = pad_sequence(trg_batch, padding_value=self.PAD_IDX, batch_first=True)
 
 
         if self.batch_first:

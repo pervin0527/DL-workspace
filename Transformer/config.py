@@ -3,8 +3,8 @@ import torch
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 save_dir = "/home/pervinco/Models/transformer_translation"
 
-batch_size = 128
-max_seq_len = 256
+batch_size = 64
+max_seq_len = 100
 d_model = 512
 num_layers = 6
 num_heads = 8

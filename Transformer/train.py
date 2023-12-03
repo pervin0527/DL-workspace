@@ -6,7 +6,7 @@ import torch
 from tqdm import tqdm
 from torch import nn
 from torchtext.data.utils import get_tokenizer
-from nltk.translate.bleu_score import corpus_bleu
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 from config import *
 from data import Multi30kDataset
@@ -46,10 +46,7 @@ def train(model, iterator, optimizer, criterion, clip):
 def eval(model, iterator, criterion):
     model.eval()
     epoch_loss = 0
-
-    hypotheses = []
-    references = []
-
+    batch_bleu = []
     with torch.no_grad():
         for batch in tqdm(iterator, desc="Evaluating", total=len(iterator)):
             src, trg = batch[0].to(device), batch[1].to(device)
@@ -60,20 +57,23 @@ def eval(model, iterator, criterion):
             loss = criterion(output_reshape, trg)
             epoch_loss += loss.item()
 
-            output = output.argmax(dim=2)  # 가장 높은 확률의 인덱스 선택
+            total_bleu = []
+            for j in range(trg.size(0)):  # 배치 내의 실제 시퀀스 수 사용
+                try:
+                    trg_words = idx_to_word(batch.trg[j], data_loader.trg_vocab)
+                    output_words = output[j].max(dim=1)[1]
+                    output_words = idx_to_word(output_words, data_loader.trg_vocab)
+                    bleu = get_bleu(hypotheses=output_words.split(), reference=trg_words.split())
+                    total_bleu.append(bleu)
+                except Exception as e:
+                    pass
 
-            # BLEU 점수 계산을 위한 가설과 참조 수집
-            for j in range(src.size(0)):
-                trg_sentence = [data_loader.trg_vocab.get_itos()[idx] for idx in trg[j].unsqueeze(0)]
-                output_sentence = [data_loader.trg_vocab.get_itos()[idx] for idx in output[j].tolist()]
+            if total_bleu:  # 빈 리스트가 아닌 경우에만 평균 계산
+                avg_bleu = sum(total_bleu) / len(total_bleu)
+                batch_bleu.append(avg_bleu)
 
-                hypotheses.append(output_sentence)
-                references.append([trg_sentence])
-
-    # 전체 데이터셋에 대한 BLEU 점수 계산
-    bleu_score = corpus_bleu(references, hypotheses) * 100
-
-    return epoch_loss / len(iterator), bleu_score
+    overall_bleu = sum(batch_bleu) / len(batch_bleu) if batch_bleu else 0  # 전체 BLEU 점수 계산
+    return epoch_loss / len(iterator), overall_bleu
 
 
 def run(total_epoch, best_loss):
@@ -96,17 +96,17 @@ def run(total_epoch, best_loss):
 
         if valid_loss < best_loss:
             best_loss = valid_loss
-            torch.save(model.state_dict(), 'saved/model-{0}.pt'.format(valid_loss))
+            torch.save(model.state_dict(), f'{save_dir}/saved/model-{0}.pt'.format(valid_loss))
 
-        f = open('result/train_loss.txt', 'w')
+        f = open(f'{save_dir}/result/train_loss.txt', 'w')
         f.write(str(train_loss_list))
         f.close()
 
-        f = open('result/bleu.txt', 'w')
+        f = open(f'{save_dir}/result/bleu.txt', 'w')
         f.write(str(bleu_list))
         f.close()
 
-        f = open('result/test_loss.txt', 'w')
+        f = open(f'{save_dir}/result/test_loss.txt', 'w')
         f.write(str(valid_loss_list))
         f.close()
 
@@ -126,6 +126,7 @@ if __name__ == "__main__":
                                   tokenize_de=tokenize_de, 
                                   sos_token='<sos>', 
                                   eos_token='<eos>', 
+                                  max_seq_len=max_seq_len,
                                   batch_size=batch_size,
                                   batch_first=True, 
                                   device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))

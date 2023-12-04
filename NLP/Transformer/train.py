@@ -4,7 +4,7 @@ from tqdm import tqdm
 from torch import nn, optim
 
 from config import *
-from data.dataset import Multi30k
+from data.dataset import Multi30kDataset
 from models.build_model import build_model
 from utils import get_bleu_score, greedy_decode
 from data.util import download_multi30k, make_cache
@@ -111,14 +111,11 @@ def main():
     print(f"test_loss: {test_loss:.5f}")
     print(f"bleu_score: {bleu_score:.5f}")
 
+
 if __name__ == "__main__":
     download_multi30k(DATA_DIR)
     make_cache(f"{DATA_DIR}/Multi30k")
 
-    DATASET = Multi30k(data_dir=f"{DATA_DIR}/Multi30k",
-                       source_language=SRC_LANGUAGE, 
-                       target_language=TRG_LANGUAGE, 
-                       max_seq_len=MAX_SEQ_LEN,
-                       vocab_min_freq=2)
+    DATASET = Multi30kDataset(data_dir=f"{DATA_DIR}/Multi30k", source_language=SRC_LANGUAGE,  target_language=TRG_LANGUAGE,  max_seq_len=MAX_SEQ_LEN, vocab_min_freq=2)
     
     main()

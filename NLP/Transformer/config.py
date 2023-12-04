@@ -2,7 +2,6 @@ import os
 import torch
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DATA_DOWNLOAD = False
 DATA_DIR = "/home/pervinco/Datasets"
 SAVE_DIR = "/home/pervinco/Models/Transformer"
 

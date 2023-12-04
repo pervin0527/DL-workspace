@@ -8,5 +8,5 @@ class TokenEmbedding(nn.Module):
         self.d_embed = d_embed
 
     def forward(self, x):
-        out = self.embedding(x) * math.sqrt(self.d_embed)
+        out = self.embedding(x) * math.sqrt(self.d_embed) ## embedding vector에 d_embed의 제곱근을 곱한다.
         return out

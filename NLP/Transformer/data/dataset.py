@@ -1,4 +1,6 @@
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 import wget
 from torchtext import transforms
 from torch.utils.data import DataLoader

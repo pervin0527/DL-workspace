@@ -1,15 +1,19 @@
 import torch
+
+from tqdm import tqdm
 from torch import nn, optim
 
 from config import *
-from data import Multi30k
+from data.dataset import Multi30k
 from models.build_model import build_model
 from utils import get_bleu_score, greedy_decode
+from data.util import download_multi30k, make_cache
+
 
 def train(model, data_loader, optimizer, criterion):
     model.train()
     epoch_loss = 0
-    for idx, (src, trg) in enumerate(data_loader):
+    for (src, trg) in tqdm(data_loader, desc="train", leave=False):
         src = src.to(DEVICE)
         trg = trg.to(DEVICE)
         trg_x = trg[:, :-1]
@@ -37,7 +41,7 @@ def evaluate(model, data_loader, criterion):
 
     total_bleu = []
     with torch.no_grad():
-        for idx, (src, trg) in enumerate(data_loader):
+        for (src, trg) in tqdm(data_loader, desc="eval", leave=False):
             src = src.to(DEVICE)
             trg = trg.to(DEVICE)
             trg_x = trg[:, :-1]
@@ -108,10 +112,13 @@ def main():
     print(f"bleu_score: {bleu_score:.5f}")
 
 if __name__ == "__main__":
-    DATASET = Multi30k(source_language=SRC_LANGUAGE, 
+    download_multi30k(DATA_DIR)
+    make_cache(f"{DATA_DIR}/Multi30k")
+
+    DATASET = Multi30k(data_dir=f"{DATA_DIR}/Multi30k",
+                       source_language=SRC_LANGUAGE, 
                        target_language=TRG_LANGUAGE, 
                        max_seq_len=MAX_SEQ_LEN,
-                       data_dir=DATA_DIR,
                        vocab_min_freq=2)
     
     main()

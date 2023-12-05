@@ -3,10 +3,18 @@ import math
 import pandas as pd
 
 def write_file_list(path, name, data):
+    img_dir = f"{path}/train_images"
+
+    dataset = []
     with open(f"{path}/{name}.txt", "w") as file:
         for item in data:
-            image_path, labels = item
-            file.write(f"{path}/{image_path},{labels} \n")
+            img_file, labels = item
+            line = f"{img_dir}/{img_file},{labels}"
+            file.write(f"{line}\n")
+
+            dataset.append(line)
+    
+    return dataset
 
 
 def read_file_list(path):
@@ -31,8 +39,8 @@ def get_datasets(data_dir, valid_ratio):
         train_dataset = total_dataset[:num_train]
         valid_dataset = total_dataset[num_train:]
 
-        write_file_list(data_dir, "train", train_dataset)
-        write_file_list(data_dir, "valid", valid_dataset)
+        train_dataset = write_file_list(data_dir, "train", train_dataset)
+        valid_dataset = write_file_list(data_dir, "valid", valid_dataset)
 
     else:
         print("train.txt, valid.txt exsist.")

@@ -1,0 +1,11 @@
+DATA_DIR = "/home/pervinco/Datasets/plant-pathology-2021"
+MODEL_NAME = "vgg"
+VALID_RATIO = 0.2
+
+EPOCHS = 100
+BATCH_SIZE = 64
+IMG_SIZE = 224
+
+LEARNING_RATE = 0.01
+MOMENTUM = 0.9
+WEIGHT_DECAY = 0.0001

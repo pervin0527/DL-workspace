@@ -1,7 +1,7 @@
 import torch
-import importlib
 
 from tqdm import tqdm
+
 from torch import nn
 from torch import optim
 from torchsummary import summary
@@ -12,66 +12,66 @@ from config import *
 from models.util import load_model
 from data.data_util import get_datasets
 from data.augmentation import get_transform
-from data.dataset import PlantPathologyDataset
+from data.dataset import ClassificationDataset
+
 
 def eval(model, dataloader, criterion):
     model.eval()
 
-    eval_loss, correct_preds, total_preds = 0, 0, 0
+    eval_loss, eval_accuracy = 0.0, 0.0
     with torch.no_grad():
         for (batch_images, batch_labels) in tqdm(dataloader, desc="Eval", leave=False):
             batch_images, batch_labels = batch_images.to(device), batch_labels.to(device)
             
             prediction = model(batch_images)
-            prediction = F.sigmoid(prediction)
             loss = criterion(prediction, batch_labels)
 
-            eval_loss = loss.item * batch_images.size(0)
-            preds = prediction > 0.5
-            correct_preds += (preds == batch_labels.byte()).all(1).sum().item()
-            total_preds += batch_labels.size(0)
+            eval_loss += loss.item() * batch_images.size(0)
+            
+            _, predicted_classes = torch.max(prediction, 1)
+            eval_accuracy += (predicted_classes == batch_labels).sum().item()
+            
+    eval_loss /= len(dataloader.dataset)
+    eval_accuracy /= len(dataloader.dataset)
 
-    eval_loss = eval_loss / len(dataloader.dataset)
-    eval_acc = correct_preds / total_preds
+    return eval_loss, eval_accuracy
 
-    return eval_loss, eval_acc
 
 
 def train(model, dataloader, criterion, optimizer):
     model.train()
     
-    train_loss, correct_preds, total_preds = 0, 0, 0
+    train_loss, train_accuracy = 0.0, 0.0
     for (batch_images, batch_labels) in tqdm(dataloader, desc="Train", leave=False):
         batch_images, batch_labels = batch_images.to(device), batch_labels.to(device)
 
         optimizer.zero_grad()
         prediction = model(batch_images)
-        prediction = F.sigmoid(prediction)
 
         loss = criterion(prediction, batch_labels)
         loss.backward()
         optimizer.step()
 
         train_loss += loss.item() * batch_images.size(0)
-        preds = prediction > 0.5
-        correct_preds += (preds == batch_labels.byte()).all(1).sum().item()
-        total_preds += batch_labels.size(0)
 
-    train_loss = train_loss / len(dataloader.dataset)
-    train_acc = correct_preds / total_preds
+        _, predicted_classes = torch.max(prediction, 1)
+        train_accuracy += (predicted_classes == batch_labels).sum().item()
 
-    return train_loss, train_acc
+    train_loss /= len(dataloader.dataset)
+    train_accuracy /= len(dataloader.dataset)
+
+    return train_loss, train_accuracy
 
 
 def main():
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
 
-    model = load_model(model_name=MODEL_NAME, num_classes=len(classes))
+    model = load_model(model_name=MODEL_NAME, num_classes=len(classes), init_weights=True)
     summary(model, input_size=(3, 224, 224), device="cpu")
     model.to(device)
 
-    criterion = nn.BCELoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(params=model.parameters(),
                            lr=LEARNING_RATE, 
                            weight_decay=WEIGHT_DECAY)
@@ -86,15 +86,16 @@ def main():
 
 
 if __name__ == "__main__":
+    from glob import glob
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
-    classes = PlantPathologyDataset.get_classes()
-    train_dataset, valid_dataset = get_datasets(DATA_DIR, valid_ratio=VALID_RATIO)
 
     train_transform = get_transform(is_train=True, img_size=IMG_SIZE)
     valid_transform = get_transform(is_train=False, img_size=IMG_SIZE)
 
-    train_dataset = PlantPathologyDataset(train_dataset, image_size=IMG_SIZE, transform=train_transform, is_train=True)
-    valid_dataset = PlantPathologyDataset(valid_dataset, image_size=IMG_SIZE, transform=valid_transform, is_train=False)
+    train_dataset = ClassificationDataset(data_dir=DATA_DIR, transform=train_transform, is_train=True)
+    valid_dataset = ClassificationDataset(data_dir=DATA_DIR, transform=valid_transform, is_train=False)
+    print(len(train_dataset), len(valid_dataset))
+
+    classes = train_dataset.get_classes()
 
     main()

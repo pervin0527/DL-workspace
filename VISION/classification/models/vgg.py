@@ -23,7 +23,7 @@ def conv_bn_relu(in_channels, out_channels, num_layers):
 
 
 class VGG19(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, init_weights=False):
         super(VGG19, self).__init__()
         ## input : [3, 224, 224]
 
@@ -45,6 +45,8 @@ class VGG19(nn.Module):
                                         nn.ReLU(inplace=True),
                                         nn.Dropout(p=0.5),
                                         nn.Linear(4096, num_classes))
+        if init_weights:
+            self.initialize_weights()
 
     def forward(self, x):
         x = self.block1(x)
@@ -59,3 +61,16 @@ class VGG19(nn.Module):
         x = self.classifier(x)
 
         return x
+    
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)

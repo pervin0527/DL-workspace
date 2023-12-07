@@ -1,9 +1,9 @@
-DATA_DIR = "/home/pervinco/Datasets/plant-pathology-2021"
-MODEL_NAME = "vgg"
+DATA_DIR = "/home/pervinco/Datasets/sports-image-classification"
+MODEL_NAME = "mobilenetv1"
 VALID_RATIO = 0.2
 
 EPOCHS = 100
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 IMG_SIZE = 224
 
 LEARNING_RATE = 0.01

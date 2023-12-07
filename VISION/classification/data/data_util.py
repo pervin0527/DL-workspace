@@ -47,4 +47,4 @@ def get_datasets(data_dir, valid_ratio):
         train_dataset = read_file_list(f"{data_dir}/train.txt")
         valid_dataset = read_file_list(f"{data_dir}/valid.txt")
 
-    return train_dataset, valid_dataset
+    return train_dataset[:10000], valid_dataset[:1000]

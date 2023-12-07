@@ -35,3 +35,5 @@ Hyper-Parameter는 "Config.py"에서 설정할 수 있습니다.
     model = build_model(len(DATASET.src_vocab), len(DATASET.trg_vocab), device=DEVICE, drop_prob=DROP_PROB)
 
 ## Experiment
+
+![img](./imgs/train_result.png)

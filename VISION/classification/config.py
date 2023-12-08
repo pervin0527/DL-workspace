@@ -1,5 +1,5 @@
 DATA_DIR = "/home/pervinco/Datasets/sports-image-classification"
-MODEL_NAME = "mobilenetv1"
+MODEL_NAME = "mobilenetv2"
 VALID_RATIO = 0.2
 
 EPOCHS = 100

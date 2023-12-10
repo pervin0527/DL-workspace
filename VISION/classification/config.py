@@ -1,5 +1,7 @@
 DATA_DIR = "/home/pervinco/Datasets/sports-image-classification"
-MODEL_NAME = "mobilenetv2"
+SAVE_DIR = "/home/pervinco/Models/classification"
+MODEL_NAME = "efficientnet-b0"
+PRETRAINED = True
 VALID_RATIO = 0.2
 
 EPOCHS = 100

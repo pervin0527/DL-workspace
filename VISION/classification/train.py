@@ -1,3 +1,4 @@
+import os
 import torch
 
 from tqdm import tqdm
@@ -5,12 +6,10 @@ from tqdm import tqdm
 from torch import nn
 from torch import optim
 from torchsummary import summary
-from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from config import *
 from models.util import load_model
-from data.data_util import get_datasets
 from data.augmentation import get_transform
 from data.dataset import ClassificationDataset
 
@@ -64,10 +63,13 @@ def train(model, dataloader, criterion, optimizer):
 
 
 def main():
+    if not os.path.isdir(SAVE_DIR):
+        os.makedirs(SAVE_DIR)
+
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
 
-    model = load_model(model_name=MODEL_NAME, num_classes=len(classes), init_weights=True)
+    model = load_model(model_name=MODEL_NAME, num_classes=len(classes), init_weights=True, pretrained=PRETRAINED)
     summary(model, input_size=(3, 224, 224), device="cpu")
     model.to(device)
 
@@ -76,6 +78,7 @@ def main():
                            lr=LEARNING_RATE, 
                            weight_decay=WEIGHT_DECAY)
 
+    min_valid_loss = float('inf')
     for epoch in range(EPOCHS):
         print(f"Epoch : [{epoch + 1} | {EPOCHS}]")
         train_loss, train_acc = train(model, train_dataloader, criterion, optimizer)
@@ -83,10 +86,13 @@ def main():
         valid_loss, valid_acc = eval(model, valid_dataloader, criterion)
         print(f"\tValid Loss : {valid_loss:.4f}, Valid Acc : {valid_acc:.4f}")
 
+        if valid_loss < min_valid_loss:
+            min_valid_loss = valid_loss
+            torch.save(model.state_dict(), f'{SAVE_DIR}/ep_{epoch+1}_{valid_loss:.4f}.pth')
+            print(f"Model saved at epoch {epoch+1} with validation loss {valid_loss:.4f}")
 
 
 if __name__ == "__main__":
-    from glob import glob
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     train_transform = get_transform(is_train=True, img_size=IMG_SIZE)

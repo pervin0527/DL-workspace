@@ -74,13 +74,11 @@ def main():
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(params=model.parameters(),
-                           lr=LEARNING_RATE, 
-                           weight_decay=WEIGHT_DECAY)
+    optimizer = optim.Adam(params=model.parameters(), lr=LEARNING_RATE,  weight_decay=WEIGHT_DECAY)
 
     min_valid_loss = float('inf')
     for epoch in range(EPOCHS):
-        print(f"Epoch : [{epoch + 1} | {EPOCHS}]")
+        print(f"\nEpoch : [{epoch + 1} | {EPOCHS}]")
         train_loss, train_acc = train(model, train_dataloader, criterion, optimizer)
         print(f"\tTrain Loss : {train_loss:.4f}, Train Acc : {train_acc:.4f}")
         valid_loss, valid_acc = eval(model, valid_dataloader, criterion)

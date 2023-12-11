@@ -1,8 +1,9 @@
 from torch import nn
 from torch.nn import functional as F
 
-from models.util import (get_same_padding_conv2d, calculate_output_image_size, round_filters, round_repeats,
-                         get_model_params, efficientnet_params, load_pretrained_weights, MBConvBlock, Swish, MemoryEfficientSwish)
+from models.effnet_util import (get_same_padding_conv2d, calculate_output_image_size, round_filters, 
+                                round_repeats, get_model_params, efficientnet_params, load_pretrained_weights, 
+                                MBConvBlock, Swish, MemoryEfficientSwish)
 
 VALID_MODELS = ('efficientnet-b0', 'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3',
                 'efficientnet-b4', 'efficientnet-b5', 'efficientnet-b6', 'efficientnet-b7',
@@ -11,9 +12,9 @@ VALID_MODELS = ('efficientnet-b0', 'efficientnet-b1', 'efficientnet-b2', 'effici
 
 def get_model(**kwargs):
     if kwargs["pretrained"]:
-        model = EfficientNet.from_pretrained(kwargs["model_name"], advprop=False)
+        model = EfficientNet.from_pretrained(kwargs["model_name"], num_classes=kwargs["num_classes"], advprop=False)
     else:
-        model = EfficientNet.from_name(kwargs["model_name"])
+        model = EfficientNet.from_name(kwargs["model_name"], num_classes=kwargs["num_classes"])
     
     return model
 
@@ -23,52 +24,51 @@ class EfficientNet(nn.Module):
         super().__init__()
         assert isinstance(blocks_args, list), 'blocks_args should be a list'
         assert len(blocks_args) > 0, 'block args must be greater than 0'
+        
         self._global_params = global_params
         self._blocks_args = blocks_args
 
-        # Batch norm parameters
+        ## Batch norm parameters
         bn_mom = 1 - self._global_params.batch_norm_momentum
         bn_eps = self._global_params.batch_norm_epsilon
 
-        # Get stem static or dynamic convolution depending on image size
+        ## Stage 1
         image_size = global_params.image_size
         Conv2d = get_same_padding_conv2d(image_size=image_size)
 
-        # Stem
-        in_channels = 3  # rgb
-        out_channels = round_filters(32, self._global_params)  # number of output channels
+        in_channels = 3
+        out_channels = round_filters(32, self._global_params)  ## 필터 수를 width_multiplier로 조정.
         self._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
         self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
-        image_size = calculate_output_image_size(image_size, 2)
+        image_size = calculate_output_image_size(image_size, 2) ## output의 height, width를 계산.
 
-        # Build blocks
+        ## Stage 2 ~
         self._blocks = nn.ModuleList([])
         for block_args in self._blocks_args:
-
-            # Update block input and output filters based on depth multiplier.
+            ## in_channel과 out_channel의 값을 조정한다.
             block_args = block_args._replace(input_filters=round_filters(block_args.input_filters, self._global_params),
                                              output_filters=round_filters(block_args.output_filters, self._global_params),
                                              num_repeat=round_repeats(block_args.num_repeat, self._global_params))
 
-            # The first block needs to take care of stride and filter size increase.
-            self._blocks.append(MBConvBlock(block_args, self._global_params, image_size=image_size))
+            self._blocks.append(MBConvBlock(block_args, self._global_params, image_size=image_size)) ## MBConv block 추가.
 
+            ## out_channels를 조정하고 repeats - 1만큼의 block을 추가.
             image_size = calculate_output_image_size(image_size, block_args.stride)
-            if block_args.num_repeat > 1:  # modify block_args to keep same output size
+            if block_args.num_repeat > 1:
                 block_args = block_args._replace(input_filters=block_args.output_filters, stride=1)
-                
+
             for _ in range(block_args.num_repeat - 1):
                 self._blocks.append(MBConvBlock(block_args, self._global_params, image_size=image_size))
                 # image_size = calculate_output_image_size(image_size, block_args.stride)  # stride = 1
 
-        # Head
+        ## Head(Classifier)
         in_channels = block_args.output_filters  # output of final block
         out_channels = round_filters(1280, self._global_params)
         Conv2d = get_same_padding_conv2d(image_size=image_size)
         self._conv_head = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         self._bn1 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
 
-        # Final linear layer
+        # Final linear layer(Output Layer)
         self._avg_pooling = nn.AdaptiveAvgPool2d(1)
         if self._global_params.include_top:
             self._dropout = nn.Dropout(self._global_params.dropout_rate)
@@ -77,39 +77,14 @@ class EfficientNet(nn.Module):
         # set activation to memory efficient swish by default
         self._swish = MemoryEfficientSwish()
 
-    def set_swish(self, memory_efficient=True):
-        """Sets swish function as memory efficient (for training) or standard (for export).
 
-        Args:
-            memory_efficient (bool): Whether to use memory-efficient version of swish.
-        """
+    def set_swish(self, memory_efficient=True):
         self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
         for block in self._blocks:
             block.set_swish(memory_efficient)
 
+
     def extract_endpoints(self, inputs):
-        """Use convolution layer to extract features
-        from reduction levels i in [1, 2, 3, 4, 5].
-
-        Args:
-            inputs (tensor): Input tensor.
-
-        Returns:
-            Dictionary of last intermediate features
-            with reduction levels i in [1, 2, 3, 4, 5].
-            Example:
-                >>> import torch
-                >>> from efficientnet.model import EfficientNet
-                >>> inputs = torch.rand(1, 3, 224, 224)
-                >>> model = EfficientNet.from_pretrained('efficientnet-b0')
-                >>> endpoints = model.extract_endpoints(inputs)
-                >>> print(endpoints['reduction_1'].shape)  # torch.Size([1, 16, 112, 112])
-                >>> print(endpoints['reduction_2'].shape)  # torch.Size([1, 24, 56, 56])
-                >>> print(endpoints['reduction_3'].shape)  # torch.Size([1, 40, 28, 28])
-                >>> print(endpoints['reduction_4'].shape)  # torch.Size([1, 112, 14, 14])
-                >>> print(endpoints['reduction_5'].shape)  # torch.Size([1, 320, 7, 7])
-                >>> print(endpoints['reduction_6'].shape)  # torch.Size([1, 1280, 7, 7])
-        """
         endpoints = dict()
 
         # Stem
@@ -134,16 +109,8 @@ class EfficientNet(nn.Module):
 
         return endpoints
 
+
     def extract_features(self, inputs):
-        """use convolution layer to extract feature .
-
-        Args:
-            inputs (tensor): Input tensor.
-
-        Returns:
-            Output of the final convolution
-            layer in the efficientnet model.
-        """
         # Stem
         x = self._swish(self._bn0(self._conv_stem(inputs)))
 
@@ -159,25 +126,20 @@ class EfficientNet(nn.Module):
 
         return x
 
+
     def forward(self, inputs):
-        """EfficientNet's forward function.
-           Calls extract_features to extract features, applies final linear layer, and returns logits.
-
-        Args:
-            inputs (tensor): Input tensor.
-
-        Returns:
-            Output of this model after processing.
-        """
         # Convolution layers
         x = self.extract_features(inputs)
+
         # Pooling and final linear layer
         x = self._avg_pooling(x)
         if self._global_params.include_top:
             x = x.flatten(start_dim=1)
             x = self._dropout(x)
             x = self._fc(x)
+
         return x
+
 
     @classmethod
     def from_name(cls, model_name, in_channels=3, **override_params):
@@ -199,14 +161,16 @@ class EfficientNet(nn.Module):
             An efficientnet model.
         """
         cls._check_model_name_is_valid(model_name)
+
         blocks_args, global_params = get_model_params(model_name, override_params)
-        model = cls(blocks_args, global_params)
+        model = cls(blocks_args, global_params) ## 모델을 생성하고, blocks_args, global_params를 전달.
         model._change_in_channels(in_channels)
+
         return model
 
+
     @classmethod
-    def from_pretrained(cls, model_name, weights_path=None, advprop=False,
-                        in_channels=3, num_classes=1000, **override_params):
+    def from_pretrained(cls, model_name, weights_path=None, advprop=False, in_channels=3, num_classes=1000, **override_params):
         """Create an efficientnet model according to name.
 
         Args:
@@ -234,10 +198,10 @@ class EfficientNet(nn.Module):
             A pretrained efficientnet model.
         """
         model = cls.from_name(model_name, num_classes=num_classes, **override_params)
-        load_pretrained_weights(model, model_name, weights_path=weights_path,
-                                load_fc=(num_classes == 1000), advprop=advprop)
+        load_pretrained_weights(model, model_name, weights_path=weights_path, load_fc=(num_classes == 1000), advprop=advprop)
         model._change_in_channels(in_channels)
         return model
+
 
     @classmethod
     def get_image_size(cls, model_name):
@@ -253,6 +217,7 @@ class EfficientNet(nn.Module):
         _, _, res, _ = efficientnet_params(model_name)
         return res
 
+
     @classmethod
     def _check_model_name_is_valid(cls, model_name):
         """Validates model name.
@@ -265,6 +230,7 @@ class EfficientNet(nn.Module):
         """
         if model_name not in VALID_MODELS:
             raise ValueError('model_name should be one of: ' + ', '.join(VALID_MODELS))
+
 
     def _change_in_channels(self, in_channels):
         """Adjust model's first convolution layer to in_channels, if in_channels not equals 3.

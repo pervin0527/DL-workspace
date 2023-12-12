@@ -1,6 +1,6 @@
 DATA_DIR = "/home/pervinco/Datasets/sports-image-classification"
 SAVE_DIR = "/home/pervinco/Models/classification"
-MODEL_NAME = "resnet50"
+MODEL_NAME = "efficientnet-b0"
 PRETRAINED = True
 VALID_RATIO = 0.2
 

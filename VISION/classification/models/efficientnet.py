@@ -6,8 +6,7 @@ from models.effnet_util import (get_same_padding_conv2d, calculate_output_image_
                                 MBConvBlock, Swish, MemoryEfficientSwish)
 
 VALID_MODELS = ('efficientnet-b0', 'efficientnet-b1', 'efficientnet-b2', 'efficientnet-b3',
-                'efficientnet-b4', 'efficientnet-b5', 'efficientnet-b6', 'efficientnet-b7',
-                'efficientnet-b8')
+                'efficientnet-b4', 'efficientnet-b5', 'efficientnet-b6', 'efficientnet-b7')
 
 
 def get_model(**kwargs):

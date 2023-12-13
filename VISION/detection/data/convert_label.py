@@ -40,19 +40,23 @@ if __name__ == "__main__":
     folder_name = "yolo_label"
 
     sets=[('2012', 'train'), ('2012', 'val'), ('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
-    classes = ["aeroplane", "bicycle", "bird", "boat", "bottle",
-               "bus", "car", "cat", "chair", "cow",
-               "diningtable", "dog", "horse", "motorbike", "person",
-               "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
+    classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
+               "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
     
     for year, image_set in sets:
         if not os.path.isdir(f"{data_dir}/VOC{year}/{folder_name}") and not os.path.exists(f"{data_dir}/VOC{year}/{folder_name}/{year}"):
             os.makedirs(f"{data_dir}/VOC{year}/{folder_name}")
         
         image_ids = open(f"{data_dir}/VOC{year}/ImageSets/Main/{image_set}.txt").read().strip().split()
-        list_file = open(f"{data_dir}/VOC{year}/{year}_{image_set}.txt", "w")
-        for image_id in image_ids:
-            list_file.write(f"{data_dir}/VOC{year}/JPEGImages/{image_id}.jpg\n")
-            convert_annotation(year, image_id)
         
-        list_file.close()
+        if image_set in ['train', 'val']:
+            file_name = "./train.txt"
+        elif image_set == 'test':
+            file_name = "./text.txt"
+        else:
+            raise ValueError("Invalid image set")
+
+        with open(file_name, "a") as list_file:
+            for image_id in image_ids:
+                list_file.write(f"{data_dir}/VOC{year}/JPEGImages/{image_id}.jpg\n")
+                convert_annotation(year, image_id)

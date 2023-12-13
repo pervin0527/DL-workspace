@@ -2,19 +2,24 @@ import os
 import torch
 
 from tqdm import tqdm
+from datetime import datetime
 
 from torch import nn
 from torch import optim
 from torchsummary import summary
 from torch.utils.data import DataLoader
 
-from config import *
 from models.util import load_model
+
 from data.augmentation import get_transform
 from data.dataset import ClassificationDataset
 
+from utils.graph import plot_and_save
+from utils.train_param import read_train_params, save_train_params
+from utils.lr_scheduler import LinearWarmupDecayScheduler
 
-def eval(model, dataloader, criterion):
+
+def eval(model, dataloader, criterion, device):
     model.eval()
 
     eval_loss, eval_accuracy = 0.0, 0.0
@@ -36,8 +41,7 @@ def eval(model, dataloader, criterion):
     return eval_loss, eval_accuracy
 
 
-
-def train(model, dataloader, criterion, optimizer):
+def train(model, dataloader, criterion, optimizer, device):
     model.train()
     
     train_loss, train_accuracy = 0.0, 0.0
@@ -63,43 +67,79 @@ def train(model, dataloader, criterion, optimizer):
 
 
 def main():
-    if not os.path.isdir(SAVE_DIR):
-        os.makedirs(SAVE_DIR)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    train_params = read_train_params("./config.yaml")
 
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE)
+    train_transform = get_transform(is_train=True, img_size=train_params["img_size"])
+    valid_transform = get_transform(is_train=False, img_size=train_params["img_size"])
 
-    model = load_model(model_name=MODEL_NAME, num_classes=len(classes), init_weights=True, pretrained=PRETRAINED)
+    train_dataset = ClassificationDataset(data_dir=train_params["data_dir"], transform=train_transform, is_train=True)
+    valid_dataset = ClassificationDataset(data_dir=train_params["data_dir"], transform=valid_transform, is_train=False)
+    classes = train_dataset.get_classes()
+    print(len(train_dataset), len(valid_dataset))
+
+    save_dir = train_params["save_dir"]
+    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = f"{save_dir}/{current_time}"
+
+    if not os.path.isdir(save_path):
+        print(save_path)
+        os.makedirs(f"{save_path}/weights")
+        os.makedirs(f"{save_path}/plots")
+        train_params["save_dir"] = save_path
+
+    save_train_params(save_path, train_params)
+
+    train_dataloader = DataLoader(train_dataset, batch_size=train_params["batch_size"], shuffle=True)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=train_params["batch_size"])
+
+    model = load_model(model_name=train_params["model_name"], num_classes=len(classes), init_weights=True, pretrained=train_params["pretrained"])
     summary(model, input_size=(3, 224, 224), device="cpu")
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(params=model.parameters(), lr=LEARNING_RATE,  weight_decay=WEIGHT_DECAY)
+    optimizer = optim.Adam(params=model.parameters(), lr=train_params["init_lr"],  weight_decay=train_params["weight_decay"])
 
+    if train_params["use_scheduler"]:
+        scheduler = LinearWarmupDecayScheduler(optimizer, train_params["init_lr"], train_params["max_lr"], train_params["min_lr"], train_params["epochs"], train_params["warmup_epochs"])
+
+    train_losses = []
+    valid_losses = []
+    learning_rates = []
     min_valid_loss = float('inf')
-    for epoch in range(EPOCHS):
-        print(f"\nEpoch : [{epoch + 1} | {EPOCHS}]")
-        train_loss, train_acc = train(model, train_dataloader, criterion, optimizer)
+    total_epochs = train_params["epochs"]
+    for epoch in range(total_epochs):
+        if train_params["use_scheduler"]:
+            current_lr = scheduler.get_last_lr()[0]
+            learning_rates.append(current_lr)
+            print(f"\nEpoch : [{epoch + 1} | {total_epochs}] \tCurrent Learning Rate: {current_lr:.6f}")
+        else:
+            print(f"\nEpoch : [{epoch + 1} | {total_epochs}]")
+
+
+        train_loss, train_acc = train(model, train_dataloader, criterion, optimizer, device)
         print(f"\tTrain Loss : {train_loss:.4f}, Train Acc : {train_acc:.4f}")
-        valid_loss, valid_acc = eval(model, valid_dataloader, criterion)
+
+        valid_loss, valid_acc = eval(model, valid_dataloader, criterion, device)
         print(f"\tValid Loss : {valid_loss:.4f}, Valid Acc : {valid_acc:.4f}")
 
-        if valid_loss < min_valid_loss:
-            min_valid_loss = valid_loss
-            torch.save(model.state_dict(), f'{SAVE_DIR}/ep_{epoch+1}_{valid_loss:.4f}.pth')
-            print(f"Model saved at epoch {epoch+1} with validation loss {valid_loss:.4f}")
+        train_losses.append(train_loss)
+        valid_losses.append(valid_loss)
 
+        if valid_loss < min_valid_loss:
+            print(f"Model saved at epoch {epoch+1} with validation loss {min_valid_loss:.4f} --> {valid_loss:.4f}")
+            min_valid_loss = valid_loss
+            torch.save(model.state_dict(), f'{save_path}/weights/ep_{epoch+1}_{valid_loss:.4f}.pth')
+        else:
+            print(f"Validation loss {valid_loss:.4f} did not decrease. {min_valid_loss:.4f}")
+
+        if train_params["use_scheduler"]:
+            scheduler.step()
+
+    plot_and_save(train_losses, 'Training Loss', 'Loss', f'{save_path}/plots/train_loss.png')
+    plot_and_save(valid_losses, 'Validation Loss', 'Loss', f'{save_path}/plots/valid_loss.png')
+    plot_and_save(learning_rates, 'Learning Rate', 'Learning Rate', f'{save_path}/plots/learning_rate.png')
+    
 
 if __name__ == "__main__":
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    train_transform = get_transform(is_train=True, img_size=IMG_SIZE)
-    valid_transform = get_transform(is_train=False, img_size=IMG_SIZE)
-
-    train_dataset = ClassificationDataset(data_dir=DATA_DIR, transform=train_transform, is_train=True)
-    valid_dataset = ClassificationDataset(data_dir=DATA_DIR, transform=valid_transform, is_train=False)
-    print(len(train_dataset), len(valid_dataset))
-
-    classes = train_dataset.get_classes()
-
     main()

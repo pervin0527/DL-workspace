@@ -1,6 +1,10 @@
 import os
 import xml.etree.ElementTree as ET
 
+sets=[('2012', 'train'), ('2012', 'val'), ('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
+classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
+           "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
+
 def convert(size, box):
     dw = 1./size[0]
     dh = 1./size[1]
@@ -38,10 +42,6 @@ def convert_annotation(year, image_id):
 if __name__ == "__main__":
     data_dir = "/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit"
     folder_name = "yolo_label"
-
-    sets=[('2012', 'train'), ('2012', 'val'), ('2007', 'train'), ('2007', 'val'), ('2007', 'test')]
-    classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
-               "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
     
     for year, image_set in sets:
         if not os.path.isdir(f"{data_dir}/VOC{year}/{folder_name}") and not os.path.exists(f"{data_dir}/VOC{year}/{folder_name}/{year}"):

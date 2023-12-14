@@ -4,11 +4,12 @@ import torch
 from torch.utils.data import Dataset
 
 class VOCDetectionDataset(Dataset):
-    def __init__(self, file_path, grid_scale=7, num_boxes=2, num_classes=20):
+    def __init__(self, file_path, grid_scale=7, num_boxes=2, num_classes=20, transform=None):
         self.files = open(file_path, "r").read().strip().split("\n")
         self.grid_scale = grid_scale
         self.num_boxes = num_boxes
         self.num_classes = num_classes
+        self.transform = transform
 
     def __len__(self):
         return len(self.files)
@@ -28,6 +29,21 @@ class VOCDetectionDataset(Dataset):
 
         image = cv2.imread(image_path)
         boxes = torch.tensor(boxes)
+
+        if self.transform is not None:
+            labels = boxes[:, 0].tolist()
+            boxes = boxes[:, 1:].tolist()
+            transformed = self.transform(image=image, bboxes=boxes, labels=labels)
+            image = transformed['image']
+            transformed_boxes = transformed['bboxes']
+            transformed_labels = transformed['labels']
+
+            boxes = []
+            for box, label in zip(transformed_boxes, transformed_labels):
+                new_box = [label] + list(box)
+                boxes.append(new_box)
+
+            boxes = torch.tensor(boxes, dtype=torch.float32)
 
         ## 0 ~ 19 : 클래스 수
         ## 20 : 클래스 포함 여부

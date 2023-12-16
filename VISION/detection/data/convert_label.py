@@ -41,7 +41,7 @@ def convert_annotation(year, image_id):
 
 if __name__ == "__main__":
     data_dir = "/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit"
-    folder_name = "yolo_label"
+    folder_name = "yolov1"
     
     for year, image_set in sets:
         if not os.path.isdir(f"{data_dir}/VOC{year}/{folder_name}") and not os.path.exists(f"{data_dir}/VOC{year}/{folder_name}/{year}"):
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         if image_set in ['train', 'val']:
             file_name = "./train.txt"
         elif image_set == 'test':
-            file_name = "./text.txt"
+            file_name = "./test.txt"
         else:
             raise ValueError("Invalid image set")
 

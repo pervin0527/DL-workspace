@@ -1,11 +1,11 @@
 save_dir: "/home/pervinco/Models/detection"
 
-epochs: 200
-batch_size: 32
+epochs: 1000
+batch_size: 64
 
-init_lr: 0.0001
+init_lr: 0.00002
 use_scheduler: true
-warmup_epochs: 100
+warmup_epochs: 300
 max_lr: 0.001
 min_lr: 0.00001
 

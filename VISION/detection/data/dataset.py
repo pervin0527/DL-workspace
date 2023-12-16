@@ -19,7 +19,7 @@ class VOCDetectionDataset(Dataset):
         
         file_name = image_path.split("/")[-1].split('.')[0]
         folder_path = '/'.join(image_path.split("/")[:-2])
-        label_path = f"{folder_path}/yolo_label/{file_name}.txt"
+        label_path = f"{folder_path}/yolov1/{file_name}.txt"
 
         boxes = []
         with open(label_path) as f:

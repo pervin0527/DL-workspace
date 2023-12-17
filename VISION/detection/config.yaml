@@ -1,15 +1,17 @@
-save_dir: "/home/pervinco/Models/detection"
-
-epochs: 1000
-batch_size: 64
-
-init_lr: 0.00002
-use_scheduler: true
-warmup_epochs: 300
-max_lr: 0.001
-min_lr: 0.00001
-
-weight_decay: 0.0001
+save_dir: "/home/pervinco/Models/classification"
 
 grid_size: 7
 num_boxes: 2
+num_classes: 20
+
+epochs: 200
+batch_size: 32
+img_size: 448
+
+init_lr: 0.00002
+weight_decay: 0.0001
+
+use_scheduler: true
+warmup_epochs: 100
+max_lr: 0.001
+min_lr: 0.00001

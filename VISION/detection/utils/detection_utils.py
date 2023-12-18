@@ -7,18 +7,6 @@ from tqdm import tqdm
 from collections import Counter
 
 def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
-    """
-    Calculates intersection over union
-
-    Parameters:
-        boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
-        boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
-        box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
-
-    Returns:
-        tensor: Intersection over union for all examples
-    """
-
     if box_format == "midpoint":
         box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
         box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
@@ -44,7 +32,6 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     x2 = torch.min(box1_x2, box2_x2)
     y2 = torch.min(box1_y2, box2_y2)
 
-    # .clamp(0) is for the case when they do not intersect
     intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
 
     box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
@@ -133,45 +120,12 @@ def mean_average_precision(pred_boxes, true_boxes, iou_threshold=0.5, box_format
     return sum(average_precisions) / len(average_precisions)
 
 
-def plot_image(image, boxes):
-    """Plots predicted bounding boxes on the image"""
-    im = np.array(image)
-    height, width, _ = im.shape
-
-    # Create figure and axes
-    fig, ax = plt.subplots(1)
-    # Display the image
-    ax.imshow(im)
-
-    # box[0] is x midpoint, box[2] is width
-    # box[1] is y midpoint, box[3] is height
-
-    # Create a Rectangle potch
-    for box in boxes:
-        box = box[2:]
-        assert len(box) == 4, "Got more values than in x, y, w, h, in a box!"
-        upper_left_x = box[0] - box[2] / 2
-        upper_left_y = box[1] - box[3] / 2
-        rect = patches.Rectangle(
-            (upper_left_x * width, upper_left_y * height),
-            box[2] * width,
-            box[3] * height,
-            linewidth=1,
-            edgecolor="r",
-            facecolor="none",
-        )
-        # Add the patch to the Axes
-        ax.add_patch(rect)
-
-    plt.show()
-
-
 def get_bboxes(dataloader, model, iou_threshold, threshold, box_format="midpoint", device="cuda"):
     model.eval()
 
     train_idx = 0
     all_pred_boxes, all_true_boxes = [], []
-    for x, y in tqdm(dataloader):
+    for x, y in tqdm(dataloader, desc="get_bboxes", leave=False):
         x = x.to(device)
         y = y.to(device)
 
@@ -179,6 +133,8 @@ def get_bboxes(dataloader, model, iou_threshold, threshold, box_format="midpoint
             predictions = model(x)
 
         batch_size = x.shape[0]
+
+        ## Cell 기반 예측을 일반 박스 형태로 변환한다.
         true_bboxes = cellboxes_to_boxes(y)
         bboxes = cellboxes_to_boxes(predictions)
 
@@ -197,45 +153,40 @@ def get_bboxes(dataloader, model, iou_threshold, threshold, box_format="midpoint
     return all_pred_boxes, all_true_boxes
 
 
-
 def convert_cellboxes(predictions, S=7):
-    """
-    Converts bounding boxes output from Yolo with
-    an image split size of S into entire image ratios
-    rather than relative to cell ratios. Tried to do this
-    vectorized, but this resulted in quite difficult to read
-    code... Use as a black box? Or implement a more intuitive,
-    using 2 for loops iterating range(S) and convert them one
-    by one, resulting in a slower but more readable implementation.
-    """
-
     predictions = predictions.to("cpu")
+
     batch_size = predictions.shape[0]
     predictions = predictions.reshape(batch_size, 7, 7, 30)
     bboxes1 = predictions[..., 21:25]
     bboxes2 = predictions[..., 26:30]
-    scores = torch.cat(
-        (predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0
-    )
-    best_box = scores.argmax(0).unsqueeze(-1)
-    best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2
+    scores = torch.cat((predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0) ## [[1, conf_score1], [1, conf_score2]]
+
+    best_box = scores.argmax(0).unsqueeze(-1) ## max conf_score인 box의 index를 갖는다. 0 또는 1
+    best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2 ## 첫번째 box가 선택되면 bboxes1 * (1 - 0) + 0 * bboxes2
+    
+    """
+        - torch.arange(7): 0부터 6까지의 숫자를 포함하는 텐서를 생성합니다. 이는 7x7 그리드의 각 행에 대한 인덱스를 나타냅니다.
+        - repeat(batch_size, 7, 1): 이 텐서를 배치 크기만큼 반복하여 각 이미지에 대해 7x7 그리드를 생성합니다. 여기서 batch_size는 배치에 있는 이미지의 수입니다. 각 이미지에 대해 7x7 그리드의 각 행이 동일한 값을 가지도록 합니다.
+        - unsqueeze(-1): 마지막 차원을 추가하여 텐서의 형상을 조정합니다. 이는 각 셀 인덱스를 하나의 차원으로 갖는 벡터로 만들어 줍니다.
+        - 결과는 batch_size x 7 x 7 x 1 형상의 텐서가 됩니다.
+    """
     cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1)
+
     x = 1 / S * (best_boxes[..., :1] + cell_indices)
     y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
-    w_y = 1 / S * best_boxes[..., 2:4]
-    converted_bboxes = torch.cat((x, y, w_y), dim=-1)
-    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1)
-    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(
-        -1
-    )
-    converted_preds = torch.cat(
-        (predicted_class, best_confidence, converted_bboxes), dim=-1
-    )
+    wh = 1 / S * best_boxes[..., 2:4]
+    converted_bboxes = torch.cat((x, y, wh), dim=-1)
+
+    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1) ## 예측된 클래스
+    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(-1)
+    converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
 
     return converted_preds
 
 
 def cellboxes_to_boxes(out, S=7):
+    ## out : [batch_size, S, S, (B * 5 + C)]
     converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1)
     converted_pred[..., 0] = converted_pred[..., 0].long()
     all_bboxes = []
@@ -248,13 +199,3 @@ def cellboxes_to_boxes(out, S=7):
         all_bboxes.append(bboxes)
 
     return all_bboxes
-
-def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
-    print("=> Saving checkpoint")
-    torch.save(state, filename)
-
-
-def load_checkpoint(checkpoint, model, optimizer):
-    print("=> Loading checkpoint")
-    model.load_state_dict(checkpoint["state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer"])

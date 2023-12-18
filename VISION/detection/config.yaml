@@ -1,8 +1,11 @@
-save_dir: "/home/pervinco/Models/classification"
+save_dir: "/home/pervinco/Models/detection"
 
 grid_size: 7
 num_boxes: 2
 num_classes: 20
+
+threshold: 0.5
+iou_threshold: 0.45
 
 epochs: 200
 batch_size: 32

@@ -63,9 +63,9 @@ class Yolov1(nn.Module):
     def build_head(self, grid_size, num_boxes, num_classes):
         S, B, C = grid_size, num_boxes, num_classes
 
-        return nn.Sequential(nn.Linear(1024 * S * S, 496),
+        return nn.Sequential(nn.Linear(1024 * S * S, 4096),
                              nn.LeakyReLU(0.1),
-                             nn.Linear(496, S * S * (C + B * 5)))
+                             nn.Linear(4096, S * S * (C + B * 5)))
     
 if __name__ == "__main__":
     from torchsummary import summary

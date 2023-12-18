@@ -4,116 +4,58 @@ from utils.detection_utils import intersection_over_union
 
 
 class YoloLoss(nn.Module):
-    """
-    Calculate the loss for yolo (v1) model
-    """
-
     def __init__(self, S=7, B=2, C=20):
         super(YoloLoss, self).__init__()
         self.mse = nn.MSELoss(reduction="sum")
-
-        """
-        S is split size of image (in paper 7),
-        B is number of boxes (in paper 2),
-        C is number of classes (in paper and VOC dataset is 20),
-        """
         self.S = S
         self.B = B
         self.C = C
 
-        # These are from Yolo paper, signifying how much we should
-        # pay loss for no object (noobj) and the box coordinates (coord)
+        ## no_object, coordinate coefficient(논문 - loss function에 기재된 lambda값들.)
         self.lambda_noobj = 0.5
         self.lambda_coord = 5
 
     def forward(self, predictions, target):
-        # predictions are shaped (BATCH_SIZE, S*S(C+B*5) when inputted
-        predictions = predictions.reshape(-1, self.S, self.S, self.C + self.B * 5)
+        ## predictions : [batch_size, S * S * (B * 5 + C)]
+        predictions = predictions.reshape(-1, self.S, self.S, self.C + self.B * 5) ## [batch_size, S, S, (B * 5 + C)]
 
-        # Calculate IoU for the two predicted bounding boxes with target bbox
+        ## Cell마다 예측된 두 개의 pred_box와 ground_truth box간 IoU 계산.
         iou_b1 = intersection_over_union(predictions[..., 21:25], target[..., 21:25])
         iou_b2 = intersection_over_union(predictions[..., 26:30], target[..., 21:25])
+        
+        ## 계산된 IoU를 쌓아서 하나의 텐서로 만든다.
         ious = torch.cat([iou_b1.unsqueeze(0), iou_b2.unsqueeze(0)], dim=0)
-
-        # Take the box with highest IoU out of the two prediction
-        # Note that bestbox will be indices of 0, 1 for which bbox was best
+ 
+        ## IoU가 가장 높은 하나의 box를 선택한다. iou_maxes는 가장 높은 IoU값, bestbox는 index로 0 또는 1의 값을 갖는다.
         iou_maxes, bestbox = torch.max(ious, dim=0)
-        exists_box = target[..., 20].unsqueeze(3)  # in paper this is Iobj_i
+        exists_box = target[..., 20].unsqueeze(3)  ## 논문상 Iobj_ij에 해당하는 것으로, object가 해당 cell에 포함되어 있는지, 있으면 1 없으면 0이다.
 
-        # ======================== #
-        #   FOR BOX COORDINATES    #
-        # ======================== #
+        ## Bounding Box Coordinates.
+        ## bestbox가 0이면 bestbox * predictions[..., 26:30]가 0이되고, 1이면 (1 - bestbox) * predictions[..., 21:25]이 0이 된다.
+        ## IoU가 더 높은 바운딩 박스의 예측값을 추출.
+        box_predictions = exists_box * ((bestbox * predictions[..., 26:30] + (1 - bestbox) * predictions[..., 21:25]))
 
-        # Set boxes with no object in them to 0. We only take out one of the two 
-        # predictions, which is the one with highest Iou calculated previously.
-        box_predictions = exists_box * (
-            (
-                bestbox * predictions[..., 26:30]
-                + (1 - bestbox) * predictions[..., 21:25]
-            )
-        )
+        box_targets = exists_box * target[..., 21:25] ## ground-truth의 box를 가져온다.
 
-        box_targets = exists_box * target[..., 21:25]
-
-        # Take sqrt of width, height of boxes to ensure that
-        box_predictions[..., 2:4] = torch.sign(box_predictions[..., 2:4]) * torch.sqrt(
-            torch.abs(box_predictions[..., 2:4] + 1e-6)
-        )
+        ## 너비와 높이 가져오기.
+        box_predictions[..., 2:4] = torch.sign(box_predictions[..., 2:4]) * torch.sqrt(torch.abs(box_predictions[..., 2:4] + 1e-6))
         box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
+        box_loss = self.mse(torch.flatten(box_predictions, end_dim=-2), torch.flatten(box_targets, end_dim=-2))
 
-        box_loss = self.mse(
-            torch.flatten(box_predictions, end_dim=-2),
-            torch.flatten(box_targets, end_dim=-2),
-        )
+        ## Object loss
+        ## IoU가 가장 높은 box에 대한 confidence score를 선별한다.
+        pred_box = (bestbox * predictions[..., 25:26] + (1 - bestbox) * predictions[..., 20:21])
 
-        # ==================== #
-        #   FOR OBJECT LOSS    #
-        # ==================== #
+        object_loss = self.mse(torch.flatten(exists_box * pred_box), torch.flatten(exists_box * target[..., 20:21]))
 
-        # pred_box is the confidence score for the bbox with highest IoU
-        pred_box = (
-            bestbox * predictions[..., 25:26] + (1 - bestbox) * predictions[..., 20:21]
-        )
+        ## No object loss
+        no_object_loss = self.mse(torch.flatten((1 - exists_box) * predictions[..., 20:21], start_dim=1), torch.flatten((1 - exists_box) * target[..., 20:21], start_dim=1))
+        no_object_loss += self.mse(torch.flatten((1 - exists_box) * predictions[..., 25:26], start_dim=1), torch.flatten((1 - exists_box) * target[..., 20:21], start_dim=1))
 
-        object_loss = self.mse(
-            torch.flatten(exists_box * pred_box),
-            torch.flatten(exists_box * target[..., 20:21]),
-        )
 
-        # ======================= #
-        #   FOR NO OBJECT LOSS    #
-        # ======================= #
+        ## Class Score loss
+        class_loss = self.mse(torch.flatten(exists_box * predictions[..., :20], end_dim=-2,), torch.flatten(exists_box * target[..., :20], end_dim=-2,))
 
-        #max_no_obj = torch.max(predictions[..., 20:21], predictions[..., 25:26])
-        #no_object_loss = self.mse(
-        #    torch.flatten((1 - exists_box) * max_no_obj, start_dim=1),
-        #    torch.flatten((1 - exists_box) * target[..., 20:21], start_dim=1),
-        #)
-
-        no_object_loss = self.mse(
-            torch.flatten((1 - exists_box) * predictions[..., 20:21], start_dim=1),
-            torch.flatten((1 - exists_box) * target[..., 20:21], start_dim=1),
-        )
-
-        no_object_loss += self.mse(
-            torch.flatten((1 - exists_box) * predictions[..., 25:26], start_dim=1),
-            torch.flatten((1 - exists_box) * target[..., 20:21], start_dim=1)
-        )
-
-        # ================== #
-        #   FOR CLASS LOSS   #
-        # ================== #
-
-        class_loss = self.mse(
-            torch.flatten(exists_box * predictions[..., :20], end_dim=-2,),
-            torch.flatten(exists_box * target[..., :20], end_dim=-2,),
-        )
-
-        loss = (
-            self.lambda_coord * box_loss  # first two rows in paper
-            + object_loss  # third row in paper
-            + self.lambda_noobj * no_object_loss  # forth row
-            + class_loss  # fifth row
-        )
+        loss = (self.lambda_coord * box_loss + object_loss + self.lambda_noobj * no_object_loss + class_loss)
 
         return loss

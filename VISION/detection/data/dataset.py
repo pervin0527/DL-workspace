@@ -1,5 +1,5 @@
-import os
 import torch
+import numpy as np
 import pandas as pd
 
 from PIL import Image
@@ -29,8 +29,15 @@ class VOCDataset(Dataset):
         image = Image.open(image_path)
         boxes = torch.tensor(boxes)
 
-        if self.transform is not None:
-            image, boxes = self.transform(image, boxes)
+        if self.transform:
+            class_labels = boxes[:, 0].unsqueeze(1)
+            box_coords = boxes[:, 1:]
+
+            transformed = self.transform(image=np.array(image), bboxes=box_coords)
+            image = transformed['image']
+
+            transformed_boxes = torch.tensor(transformed['bboxes'])
+            boxes = torch.cat((class_labels[:len(transformed_boxes)], transformed_boxes), dim=1)
 
         label_matrix = torch.zeros((self.S, self.S, self.C + 5 * self.B))
         for box in boxes:
@@ -50,6 +57,7 @@ class VOCDataset(Dataset):
                 label_matrix[i, j, class_label] = 1
 
         return image, label_matrix
+
 
 
 if __name__ == "__main__":

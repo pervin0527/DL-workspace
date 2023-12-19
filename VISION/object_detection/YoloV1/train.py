@@ -72,7 +72,7 @@ def main():
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=train_params["batch_size"], shuffle=True, num_workers=num_workers)
     valid_dataloader = DataLoader(dataset=test_dataset, batch_size=train_params["batch_size"], num_workers=num_workers)
 
-    model = Yolov1(grid_size=7, num_boxes=2, num_classes=20)
+    model = Yolov1(grid_size=7, num_boxes=2, num_classes=20, pretrained=train_params["pretrained"])
     optimizer = optim.Adam(model.parameters(), lr=train_params["init_lr"], weight_decay=train_params["weight_decay"])
     loss_func = YoloLoss()
     summary(model, input_size=(3, train_params["img_size"], train_params["img_size"]), device="cpu")
@@ -99,7 +99,12 @@ def main():
     max_mAP = 0
     total_epochs = train_params["epochs"]
     for epoch in range(total_epochs):
-        print(f"\nEpoch : [{epoch + 1} | {total_epochs}]")
+        if train_params["use_scheduler"]:
+            current_lr = scheduler.get_last_lr()[0]
+            learning_rates.append(current_lr)
+            print(f"\nEpoch : [{epoch + 1} | {total_epochs}] \tCurrent Learning Rate: {current_lr:.6f}")
+        else:
+            print(f"\nEpoch : [{epoch + 1} | {total_epochs}]")
 
         train_loss = train(train_dataloader, model, optimizer, loss_func, device)
         pred_boxes, target_boxes = get_bboxes(train_dataloader, model, threshold=train_params["threshold"], iou_threshold=train_params["iou_threshold"])

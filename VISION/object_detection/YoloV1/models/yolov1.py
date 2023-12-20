@@ -96,7 +96,8 @@ class Yolov1(nn.Module):
         self.C = kwargs["num_classes"]
 
         self.darknet = Darknet53(kwargs["num_classes"])
-        self.darknet.load_weights(kwargs["pretrained"])
+        if kwargs["pretrained"] is not None:
+            self.darknet.load_weights(kwargs["pretrained"])
         
         # self.darknet = self.build_darknet(in_channels)
         

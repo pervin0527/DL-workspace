@@ -12,7 +12,7 @@ def post_processing(bboxes, threshold=0.5, iou_threshold=0.45, img_width=448, im
     boxes = []
     for pred in bboxes:
         class_id, prob, x, y, w, h = pred
-        if prob > threshold:  # threshold는 설정해야 하는 신뢰도 임계값
+        if prob > threshold:
             x_center = int(x * img_width)
             y_center = int(y * img_height)
             width = int(w * img_width)
@@ -29,11 +29,11 @@ def predict_single_image(model, image, device="cuda"):
     image = image.to(device)
 
     with torch.no_grad():
-        predictions = model(image.unsqueeze(0))  # 단일 이미지 처리를 위해 차원 추가
+        predictions = model(image.unsqueeze(0))
 
-    # 예측 결과를 일반적인 박스 형태로 변환
     bboxes = cellboxes_to_boxes(predictions, S=7)
-    return bboxes[0]  # 첫 번째 (그리고 유일한) 이미지의 박스 반환
+
+    return bboxes[0]
 
 
 def main():

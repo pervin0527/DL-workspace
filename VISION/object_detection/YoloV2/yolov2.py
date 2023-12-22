@@ -73,6 +73,24 @@ class YoloV2(nn.Module):
 
 if __name__ == "__main__":
     from torchsummary import summary
+    batch_size = 32
+    num_anchors = 5
+    num_classes = 20
 
     model = YoloV2(num_classes=20)
-    summary(model, input_size=(3, 448, 448), device="cpu")
+    summary(model, input_size=(3, 416, 416), device="cpu")
+
+    dummy_input = torch.randn(batch_size, 3, 416, 416)
+    with torch.no_grad():
+        dummy_output = model(dummy_input)
+
+    print(dummy_output.shape)
+
+    output = dummy_output
+    height = output.data.size(2) ## 13
+    width = output.data.size(3) ## 13
+    output = output.view(batch_size, 5, -1, height * width)
+    print(output.shape)
+
+    cls = output[:, :, 5:, :].contiguous().view(batch_size * num_anchors, num_classes, height * width).transpose(1, 2).contiguous().view(-1, num_classes)
+    print(cls.shape)

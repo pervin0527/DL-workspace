@@ -154,32 +154,41 @@ def get_bboxes(dataloader, model, iou_threshold, threshold, box_format="midpoint
 
 
 def convert_cellboxes(predictions, S=7):
+    """
+    7 * 7 * 30
+        - 0 ~ 19 : class_scores
+        - 20 : confidence score1, 
+        - 21 ~ 23 : coords1, 
+        - 25 : confidence score2,
+        - 26 ~ 29 : coords2
+    predictions : [batch_size, 1470]
+    """
     predictions = predictions.to("cpu")
 
     batch_size = predictions.shape[0]
-    predictions = predictions.reshape(batch_size, 7, 7, 30)
-    bboxes1 = predictions[..., 21:25]
-    bboxes2 = predictions[..., 26:30]
+    predictions = predictions.reshape(batch_size, 7, 7, 30) ## [batch_size, 7, 7, 30]
+
+    bboxes1 = predictions[..., 21:25] ## 모든 grid cell의 첫번째 box
+    bboxes2 = predictions[..., 26:30] ## 모든 grid cell의 두번째 box
     scores = torch.cat((predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0) ## [[1, conf_score1], [1, conf_score2]]
 
-    best_box = scores.argmax(0).unsqueeze(-1) ## max conf_score인 box의 index를 갖는다. 0 또는 1
+    best_box = scores.argmax(0).unsqueeze(-1) ## 각각의 cell이 예측한 두 개의 box 중 더 높은 confidence score인 박스 index를 고른다.(0 또는 1)
     best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2 ## 첫번째 box가 선택되면 bboxes1 * (1 - 0) + 0 * bboxes2
     
     """
-        - torch.arange(7): 0부터 6까지의 숫자를 포함하는 텐서를 생성합니다. 이는 7x7 그리드의 각 행에 대한 인덱스를 나타냅니다.
-        - repeat(batch_size, 7, 1): 이 텐서를 배치 크기만큼 반복하여 각 이미지에 대해 7x7 그리드를 생성합니다. 여기서 batch_size는 배치에 있는 이미지의 수입니다. 각 이미지에 대해 7x7 그리드의 각 행이 동일한 값을 가지도록 합니다.
-        - unsqueeze(-1): 마지막 차원을 추가하여 텐서의 형상을 조정합니다. 이는 각 셀 인덱스를 하나의 차원으로 갖는 벡터로 만들어 줍니다.
-        - 결과는 batch_size x 7 x 7 x 1 형상의 텐서가 됩니다.
+        - torch.arange(7): 0부터 6까지의 숫자를 포함하는 텐서를 생성. 이는 7x7 그리드의 각 행에 대한 인덱스에 해당.
+        - repeat(batch_size, 7, 1): 이 텐서를 배치 크기만큼 반복하여 각 이미지에 대해 7x7 그리드를 생성. [batch_size, 7, 7] 마지막 7은 [0, 1, 2, 3, 4, 5, 6]으로 구성
+        - unsqueeze(-1): 마지막 차원을 추가하여 텐서의 형상을 조정. [batch_size, 7, 7, 1]
     """
     cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1)
 
-    x = 1 / S * (best_boxes[..., :1] + cell_indices)
-    y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
+    x = 1 / S * (best_boxes[..., :1] + cell_indices) ## grid cell의 중심좌표 x에 grid cell idx를 더하고 S로 나눠서 bounding box 중심으로 변환.
+    y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3)) ## [batch_size, 7, 7, 1]로 첫번째 7과 두번째 7의 위치를 변환함. 이를 통해 bounding box의 중심으로 변환하는데 사용한다.
     wh = 1 / S * best_boxes[..., 2:4]
     converted_bboxes = torch.cat((x, y, wh), dim=-1)
 
-    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1) ## 예측된 클래스
-    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(-1)
+    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1) ## 예측된 class_idx
+    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(-1) ## confidence score
     converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
 
     return converted_preds
@@ -188,15 +197,14 @@ def convert_cellboxes(predictions, S=7):
 
 def cellboxes_to_boxes(out, S=7):
     ## out : [batch_size, S, S, (B * 5 + C)]
-    converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1)
-    converted_pred[..., 0] = converted_pred[..., 0].long()
+    converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1) ## [batch_size, 49, 30]
+    converted_pred[..., 0] = converted_pred[..., 0].long() ## class idx들을 정수형으로 변환.
+    
     all_bboxes = []
-
     for ex_idx in range(out.shape[0]):
         bboxes = []
-
         for bbox_idx in range(S * S):
-            bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]])
+            bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]]) ## class_dix, confidence_score, x, y, w, h를 boxes list에 담는다.
         all_bboxes.append(bboxes)
 
     return all_bboxes

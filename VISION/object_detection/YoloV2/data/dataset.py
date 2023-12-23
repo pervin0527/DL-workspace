@@ -1,12 +1,26 @@
 import os
 import cv2
+import torch
 import numpy as np
+import albumentations as A
 import xml.etree.ElementTree as ET
 
 from torch.utils.data import Dataset
+from torch.utils.data.dataloader import default_collate
+
+
+def custom_collate_fn(batch):
+    items = list(zip(*batch))
+    items[0] = default_collate(items[0])
+    items[1] = list(items[1])
+    # items[1] = torch.tensor(items[1])
+
+    return items
+
 
 class VOCDataset(Dataset):
     def __init__(self, root_path="/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit", year="2007", mode="train", image_size=448, is_training = True):
+        self.img_size = image_size
         self.classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
                         'bus', 'car', 'cat', 'chair', 'cow',
                         'diningtable', 'dog', 'horse', 'motorbike', 'person',
@@ -35,13 +49,21 @@ class VOCDataset(Dataset):
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
+        bboxes, labels = [], []
         annot = ET.parse(image_xml_path)
-        objects = []
         for obj in annot.findall('object'):
-            xmin, xmax, ymin, ymax = [int(obj.find('bndbox').find(tag).text) - 1 for tag in
-                                      ["xmin", "xmax", "ymin", "ymax"]]
+            xmin, xmax, ymin, ymax = [int(obj.find('bndbox').find(tag).text) - 1 for tag in ["xmin", "xmax", "ymin", "ymax"]]
             label = self.classes.index(obj.find('name').text.lower().strip())
-            objects.append([xmin, ymin, xmax, ymax, label])
+
+            bboxes.append([xmin, ymin, xmax, ymax])
+            labels.append(label)
+            
+        transform = A.Compose([A.Resize(self.img_size, self.img_size)], bbox_params=A.BboxParams(format="pascal_voc", label_fields=[]))
+        transformed = transform(image=image, bboxes=bboxes)
+
+        image = transformed["image"]
+        boxes = transformed["bboxes"]
+        objects = [[box[0], box[2], box[1], box[3], label] for box, label in zip(boxes, labels)]
 
         return np.transpose(np.array(image, dtype=np.float32), (2, 0, 1)), np.array(objects, dtype=np.float32)
     

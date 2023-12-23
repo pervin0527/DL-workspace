@@ -25,7 +25,7 @@ class YoloLoss(nn.modules.loss._Loss):
         height = output.data.size(2) ## 13
         width = output.data.size(3) ## 13
 
-        ##  (t_x, t_y, t_w, t_h), conf_score(t_o), classification_scores를 가져온다. -> 즉 anchor를 얼마나 이동시키고 조절할지에 대한 Offset이다.
+        ##  (t_x, t_y, t_w, t_h), conf_score, classification_scores를 가져온다. -> 즉 anchor를 얼마나 이동시키고 조절할지에 대한 Offset이다.
         ## [batch_size, 125, 13, 13] -> [batch_size, 5, 25, 169] = [batch_size, num_boxes, (num_classes + coords + conf_score), grid_cells]
         output = output.view(batch_size, self.num_anchors, -1, height * width)
 
@@ -46,8 +46,8 @@ class YoloLoss(nn.modules.loss._Loss):
         pred_boxes = torch.FloatTensor(batch_size * self.num_anchors * height * width, 4) ## [bathc_size * 5 * 13 * 13, 4]
         
         ## grid cell의 x, y 좌표 생성.
-        lin_x = torch.range(0, width - 1).repeat(height, 1).view(height * width)
-        lin_y = torch.range(0, height - 1).repeat(width, 1).t().contiguous().view(height * width)
+        lin_x = torch.arange(0, width).repeat(height, 1).view(height * width)
+        lin_y = torch.arange(0, height).repeat(width, 1).t().contiguous().view(height * width)
 
         ## 정의된 앵커 박스의 너비와 높이를 가져와서 num_anchors x 1 크기의 텐서로 변환
         anchor_w = self.anchors[:, 0].contiguous().view(self.num_anchors, 1)
@@ -61,7 +61,7 @@ class YoloLoss(nn.modules.loss._Loss):
             anchor_h = anchor_h.cuda()
 
         ## 모델의 출력인 coord에서 바운딩 박스의 중심 좌표 (x, y)와 크기 (width, height)를 실제 좌표로 변환.
-        pred_boxes[:, 0] = (coord[:, :, 0].detach() + lin_x).view(-1) ## grid_cell의 중심점을 모델이 예측한 offset만큼 이동 시킨다.
+        pred_boxes[:, 0] = (coord[:, :, 0].detach() + lin_x).view(-1) ## anchor box의 중심점을 모델이 예측한 offset만큼 이동 시킨다.
         pred_boxes[:, 1] = (coord[:, :, 1].detach() + lin_y).view(-1)
 
         pred_boxes[:, 2] = (coord[:, :, 2].detach().exp() * anchor_w).view(-1) ## anchor box의 height, width에 예측한 offset을 반영해 조절한다.
@@ -88,8 +88,8 @@ class YoloLoss(nn.modules.loss._Loss):
         cls = cls[cls_mask].view(-1, self.num_classes)
 
         # Compute losses
-        mse = nn.MSELoss(size_average=False)
-        ce = nn.CrossEntropyLoss(size_average=False)
+        mse = nn.MSELoss(reduction="sum")
+        ce = nn.CrossEntropyLoss(reduction="sum")
         self.loss_coord = self.coord_scale * mse(coord * coord_mask, tcoord * coord_mask) / batch_size
         self.loss_conf = mse(conf * conf_mask, tconf * conf_mask) / batch_size
         self.loss_cls = self.class_scale * 2 * ce(cls, tcls) / batch_size
@@ -99,27 +99,25 @@ class YoloLoss(nn.modules.loss._Loss):
 
     def build_targets(self, pred_boxes, ground_truth, height, width):
         batch_size = len(ground_truth)
+        """
+        - conf_mask : confidence score 마스크. 모든 값을 1로 초기화하고 noobject_scale을 곱한다.(객체가 존재하지 않는다고 가정)
+        - coord_mask : 바운딩 박스 좌표 마스크.
+        - cls_mask : class scores 마스크.
+        - tcoord : 실제 바운딩 박스의 좌표 마스크.
+        - tconf : 실제 객체의 존재 여부를 나타내는 마스크.
+        - tcls: 타겟 클래스는 실제 객체의 클래스 정보를 저장.
+        """
 
-        ## confidence mask, object가 존재하지 않을 것으로 가정하고 1로 초기화.
-        conf_mask = torch.ones(batch_size, self.num_anchors, height * width, requires_grad=False) * self.noobject_scale ## [batch_size, num_anchors, 169]
-        
-        ## 좌표(coordinate) 마스크로, 바운딩 박스의 좌표에 대한 가중치를 0으로 초기화
+        conf_mask = torch.ones(batch_size, self.num_anchors, height * width, requires_grad=False) * self.noobject_scale ## [batch_size, num_anchors, 169]        
         coord_mask = torch.zeros(batch_size, self.num_anchors, 1, height * width, requires_grad=False) ## [batch_size, num_anchors, 1, 169]
-
-        ## 클래스(class) 마스크로, 클래스에 대한 정보를 0으로 초기화
-        cls_mask = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False).byte() ## [batch_size, num_anchors, 169]
-
-        ## 타겟 좌표로, 바운딩 박스의 실제 좌표를 저장
+        cls_mask = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False).bool() ## [batch_size, num_anchors, 169]
         tcoord = torch.zeros(batch_size, self.num_anchors, 4, height * width, requires_grad=False) ## [batch_size, num_anchors, 4, 169]
-
-        ## 타겟 신뢰도로, 실제 객체의 존재 여부를 저장
         tconf = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False) ## [batch_size, num_anchors, 169]
-
-        ## 타겟 클래스로, 실제 클래스 정보를 저장
         tcls = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False) ## [batch_size, nnum_anchors, 169]
 
+        ## 0 ~ 31 batch에 포함된 각각의 ground-truth에 접근.
         for b in range(batch_size):
-            if len(ground_truth[b]) == 0: ## 현재 이미지에 ground truth가 없으면 넘어간다.
+            if len(ground_truth[b]) == 0: ## 현재 이미지에 ground truth가 없으면 object가 없는 것이므로 넘어간다.
                 continue
 
             cur_pred_boxes = pred_boxes[b * (self.num_anchors * height * width) : (b + 1) * (self.num_anchors * height * width)] ## 현재 이미지에 대한 예측된 바운딩 박스를 선택.
@@ -129,20 +127,23 @@ class YoloLoss(nn.modules.loss._Loss):
             else:
                 anchors = torch.cat([torch.zeros_like(self.anchors), self.anchors], 1) ## 0으로 채워진 텐서와 원래의 앵커 텐서를 연결. [0] * 5와 [(w, h)] * 5
 
-            gt = torch.zeros(len(ground_truth[b]), 4) ## [box 수, 4]
+            ## loss 계산을 위해 ground_truth의 xmin, ymin, xmax, ymax를 변환한다.
+            gt = torch.zeros(len(ground_truth[b]), 4) ## [object의 수, 4]
             for i, anno in enumerate(ground_truth[b]):
                 gt[i, 0] = (anno[0] + anno[2] / 2) / self.reduction ## (xmin + xmax) / 32
                 gt[i, 1] = (anno[1] + anno[3] / 2) / self.reduction ## (ymin + ymax) / 32
                 gt[i, 2] = anno[2] / self.reduction ## width / 32
                 gt[i, 3] = anno[3] / self.reduction ## height / 32
 
-            iou_gt_pred = bbox_ious(gt, cur_pred_boxes) ## Ground truth 바운딩 박스와 예측된 바운딩 박스 간의 IOU(Intersection over Union)를 계산
-            mask = (iou_gt_pred > self.thresh).sum(0) >= 1 ##  IOU가 설정된 임계값(threshold)보다 큰 경우를 찾아 해당하는 위치의 신뢰도 마스크를 0으로 설정
+            iou_gt_pred = bbox_ious(gt, cur_pred_boxes) ## Ground truth 바운딩 박스와 예측된 바운딩 박스 간의 IOU(Intersection over Union)를 계산.
+            
+            ##  IOU가 설정된 임계값(threshold)보다 박스의 수를 측정. 예측된 바운딩 박스가 최소 한 개의 ground truth 박스와 임계값 이상의 IOU를 가지는 경우를 찾는다.
+            mask = (iou_gt_pred > self.thresh).sum(0) >= 1
             conf_mask[b][mask.view_as(conf_mask[b])] = 0 ## object가 있는 곳을 0으로 표기.
 
             gt_wh = gt.clone()
             gt_wh[:, :2] = 0 ## 바운딩 박스의 너비와 높이만을 사용하기 위해 중심 좌표를 0으로 설정
-            iou_gt_anchors = bbox_ious(gt_wh, anchors) ## nd truth 바운딩 박스와 앵커 간의 IOU를 계산
+            iou_gt_anchors = bbox_ious(gt_wh, anchors) ## gt 박스와 앵커 간의 IOU를 계산
             _, best_anchors = iou_gt_anchors.max(1) ## 각 ground truth 바운딩 박스에 대해 가장 높은 IOU 값을 가진 앵커를 찾는다.
 
             for i, anno in enumerate(ground_truth[b]): ## 각 ground truth 바운딩 박스에 대해

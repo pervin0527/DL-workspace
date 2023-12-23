@@ -1,0 +1,11 @@
+data_dir: "/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit"
+img_size: 416
+
+reductuon: 32
+epochs: 100
+batch_size: 2
+
+init_lr: 0.00001
+momentum: 0.9
+weight_decay: 0.0005
+lr_schedule: { "0": 0.00001, "5": 0.0001, "80": 0.00001, "110": 0.000001 }

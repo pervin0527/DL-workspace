@@ -1,11 +1,12 @@
 import os
 import cv2
-import torch
 import numpy as np
 import albumentations as A
 import xml.etree.ElementTree as ET
 
-from torch.utils.data import Dataset
+from data.augmentation import get_transform
+
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.dataloader import default_collate
 
 
@@ -19,7 +20,7 @@ def custom_collate_fn(batch):
 
 
 class VOCDataset(Dataset):
-    def __init__(self, root_path="/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit", year="2007", mode="train", image_size=448, is_training = True):
+    def __init__(self, root_path="/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit", year="2007", mode="train", image_size=448, is_training=True):
         self.img_size = image_size
         self.classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle',
                         'bus', 'car', 'cat', 'chair', 'cow',
@@ -58,18 +59,29 @@ class VOCDataset(Dataset):
             bboxes.append([xmin, ymin, xmax, ymax])
             labels.append(label)
             
-        transform = A.Compose([A.Resize(self.img_size, self.img_size)], bbox_params=A.BboxParams(format="pascal_voc", label_fields=[]))
+        # transform = A.Compose([A.Resize(self.img_size, self.img_size)], bbox_params=A.BboxParams(format="pascal_voc", label_fields=[]))
+        transform = get_transform(self.is_training, self.image_size)
         transformed = transform(image=image, bboxes=bboxes)
 
         image = transformed["image"]
         boxes = transformed["bboxes"]
         objects = [[box[0], box[2], box[1], box[3], label] for box, label in zip(boxes, labels)]
 
-        return np.transpose(np.array(image, dtype=np.float32), (2, 0, 1)), np.array(objects, dtype=np.float32)
+        # return np.transpose(np.array(image, dtype=np.float32), (2, 0, 1)), np.array(objects, dtype=np.float32)
+        return image , np.array(objects, dtype=np.float32)
     
 
 if __name__ == "__main__":
-    dataset = VOCDataset(image_size=416)
-    sample_data = dataset[0]
-    image, label = sample_data[0], sample_data[1]
-    print(image.shape, label.shape)
+    train_dataset = VOCDataset(image_size=416)
+    train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, drop_last=True, collate_fn=custom_collate_fn)
+
+    for data in train_dataloader:
+        images, labels = data
+
+        print(images.shape)
+        print(len(labels))
+
+        for label in labels:
+            print(label.shape)
+
+        break

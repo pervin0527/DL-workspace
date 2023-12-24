@@ -10,7 +10,8 @@ from loss import YoloLoss
 from models.yolov2 import YoloV2
 from data.dataset import VOCDataset, custom_collate_fn
 
-from utils.train_param import read_train_params
+from utils.train_param import read_train_params, save_train_params
+
 
 def eval(model, dataloader, criterion, device):
     model.eval()
@@ -79,6 +80,18 @@ def main():
     train_dataloader = DataLoader(train_dataset, batch_size=train_params["batch_size"], shuffle=True, drop_last=True, collate_fn=custom_collate_fn, num_workers=num_workers)
     valid_dataloader = DataLoader(valid_dataset, batch_size=train_params["batch_size"], drop_last=True, collate_fn=custom_collate_fn, num_workers=num_workers)
 
+    save_dir = train_params["save_dir"]
+    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = f"{save_dir}/{current_time}"
+
+    if not os.path.isdir(save_path):
+        print(save_path)
+        os.makedirs(f"{save_path}/weights")
+        os.makedirs(f"{save_path}/plots")
+        train_params["save_dir"] = save_path
+
+    save_train_params(save_path, train_params)
+
     model = YoloV2(num_classes=20).cuda()
     criterion = YoloLoss(num_classes=20, anchors=model.anchors, reduction=32)
     optimizer = torch.optim.SGD(model.parameters(), lr=train_params["init_lr"], momentum=train_params["momentum"], weight_decay=train_params["weight_decay"])
@@ -86,6 +99,7 @@ def main():
     epochs = train_params["epochs"]
     lr_schedule = train_params["lr_schedule"]
 
+    min_loss = float("inf")
     for epoch in range(epochs):
         if str(epoch) in lr_schedule.keys():
             for param_group in optimizer.param_groups:
@@ -94,10 +108,17 @@ def main():
         print(f"\nEpoch : [{epoch + 1} | {epochs}]")
         
         train_loss, train_bbox_loss, train_conf_loss, train_cls_loss = train(model, train_dataloader, optimizer, criterion, device)
-        print(f"Train Loss : {train_loss:.4f}, Bbox Loss : {train_bbox_loss}, Conf Loss : {train_conf_loss}, Classification Loss : {train_cls_loss}")
+        print(f"Train Loss : {train_loss:.4f}, Bbox Loss : {train_bbox_loss:.4f}, Conf Loss : {train_conf_loss:.4f}, Classification Loss : {train_cls_loss:.4f}")
 
         valid_loss, valid_bbox_loss, valid_conf_loss, valid_cls_loss = eval(model, valid_dataloader, criterion, device)
-        print(f"valid Loss : {valid_loss:.4f}, Bbox Loss : {valid_bbox_loss}, Conf Loss : {valid_conf_loss}, Classification Loss : {valid_cls_loss}")
+        print(f"valid Loss : {valid_loss:.4f}, Bbox Loss : {valid_bbox_loss:.4f}, Conf Loss : {valid_conf_loss:.4f}, Classification Loss : {valid_cls_loss:.4f}")
+
+        if valid_loss < min_loss:
+            print(f"Model saved at epoch {epoch+1} with validation loss {min_loss:.4f} --> {valid_loss:.4f}")
+            min_loss = valid_loss
+            torch.save(model.state_dict(), f'{save_path}/weights/ep_{epoch+1}_{valid_loss:.4f}.pth')
+        else:
+            print(f"Validation loss {valid_loss:.4f} did not decrease. {min_loss:.4f}")
 
 
 if __name__ == "__main__":

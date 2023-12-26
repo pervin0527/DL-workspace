@@ -1,11 +1,13 @@
 data_dir: "/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit"
+save_dir: "/home/pervinco/Models/yolov2"
 backbone_weight: "./darknet19_448.weights"
 
 display_interval: 10
+save_interval: 20
 img_size: 416
 
 epochs: 100
-batch_size: 16
+batch_size: 64
 
 lr: 0.0001
 decay_lrs: { 60: 0.0001, 90: 0.000001 }

@@ -37,7 +37,7 @@ class Yolov2(nn.Module):
             weight_path = self.params["backbone_weight"]
             print(f'load pretrained weight from {weight_path}')
             darknet19.load_weights(weight_path)
-            print('pretrained weight loaded!\n')
+            print('pretrained weight loaded!')
 
         # darknet backbone
         self.conv1 = nn.Sequential(darknet19.layer0, darknet19.layer1, darknet19.layer2, darknet19.layer3, darknet19.layer4)

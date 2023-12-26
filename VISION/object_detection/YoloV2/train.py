@@ -1,7 +1,7 @@
 import os
 import torch
 
-from tqdm import tqdm
+from datetime import datetime
 from torch.utils.data import DataLoader
 
 from models.yolov2 import Yolov2
@@ -33,7 +33,7 @@ def train(model, dataloader, optimizer, epoch, device, train_params):
         loss_temp += loss.item()
         if (step + 1) % train_params["display_interval"] == 0:
             loss_temp /= train_params["display_interval"]
-            print(f"[epoch {epoch}][step {step+1}/{len(dataloader)}] loss:{loss_temp:.4f}, lr:{optimizer.param_groups[0]['lr']:.2e}, iou_loss:{iou_loss.mean().item():.4f}, box_loss:{box_loss.mean().item():.4f}, cls_loss:{class_loss.mean().item():.4f}")
+            print(f"[epoch {epoch}][step {step+1}/{len(dataloader)}] loss:{loss_temp:.4f}, iou_loss:{iou_loss.mean().item():.4f}, box_loss:{box_loss.mean().item():.4f}, cls_loss:{class_loss.mean().item():.4f}")
             loss_temp = 0
 
     
@@ -41,6 +41,18 @@ def main():
     num_workers = os.cpu_count()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     train_params = read_train_params("./config.yaml")
+
+    save_dir = train_params["save_dir"]
+    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = f"{save_dir}/{current_time}"
+
+    if not os.path.isdir(save_path):
+        print(save_path)
+        os.makedirs(f"{save_path}/weights")
+        os.makedirs(f"{save_path}/plots")
+        train_params["save_dir"] = save_path
+    
+    save_train_params(save_path, train_params)
 
     train_dataset = VOCDataset(root_dir=train_params["data_dir"], image_sets=['train', 'val'], years=["2007", "2012"], img_size=train_params["img_size"])
     valid_dataset = VOCDataset(root_dir=train_params["data_dir"], image_sets=['test'], years=["2007"], img_size=train_params["img_size"])
@@ -55,19 +67,18 @@ def main():
     total_epochs = train_params["epochs"]
     scale_range = train_params["scale_range"]
     for epoch in range(1, total_epochs+1):
-        print(f"Epoch {epoch}|{total_epochs}")
-
         if epoch in train_params["decay_lrs"]:
             lr = train_params["decay_lrs"][epoch]
             adjust_learning_rate(optimizer, lr)
-            print(f"adjust learning rate to {lr}")
+            # print(f"adjust learning rate to {lr}")
 
-        if train_params["multi_scale"] and epoch in train_params["epoch_scale"]:
-            scale_range = train_params["epoch_scale"][epoch]
-            print(f"Change scale range to {scale_range}")
-
+        print(f"\nEpoch {epoch}|{total_epochs}, lr:{optimizer.param_groups[0]['lr']:.2e}")
         train(model, train_dataloader, optimizer, epoch, device, train_params)
-        print()
+
+        if epoch % train_params["save_interval"] == 0:
+            save_name = f"{save_path}/yolov2_epoch_{epoch}.pth"
+            torch.save({'model': model.state_dict(), 'epoch': epoch, 'lr': lr}, save_name)
+            print(f"Saved {save_name}.")
 
 
 if __name__ == "__main__":

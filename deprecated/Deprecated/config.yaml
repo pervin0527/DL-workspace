@@ -1,0 +1,12 @@
+data_dir: "/home/pervinco/Datasets/PASCAL_VOC/VOCDevkit"
+save_dir: "/home/pervinco/Models/yolov2"
+img_size: 416
+
+reductuon: 32
+epochs: 200
+batch_size: 32
+
+init_lr: 0.00001
+momentum: 0.9
+weight_decay: 0.0005
+lr_schedule: { "0": 0.00001, "5": 0.0001, "80": 0.00001, "110": 0.000001 }

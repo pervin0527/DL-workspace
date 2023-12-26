@@ -13,7 +13,7 @@ def get_transform(is_train, img_size):
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.2),
             A.RandomRotate90(p=0.5),
-            # A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.2, rotate_limit=45, p=0.5),
+            A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.2, rotate_limit=45, p=0.5),
 
             A.OneOf([
                 A.Blur(p=0.5), 
@@ -31,15 +31,15 @@ def get_transform(is_train, img_size):
                 A.RandomShadow(shadow_roi=(0, 0.5, 1, 1), num_shadows_lower=1, num_shadows_upper=3, shadow_dimension=5, p=0.5)
             ], p=0.5),
 
-            # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-            # ToTensorV2(),
-        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2(),
+        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=[]))
 
     else:
         transform = A.Compose([
             A.Resize(img_size, img_size),
-            # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-            # ToTensorV2(),
-        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['labels']))
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2(),
+        ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=[]))
 
     return transform

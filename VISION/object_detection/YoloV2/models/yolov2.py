@@ -1,96 +1,113 @@
 import torch
-from torch import nn
+import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
 
-def conv_block(in_channels, out_channels, kernel_size, stride, padding, pooling=False):
-    layers = [nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False),
-              nn.BatchNorm2d(out_channels),
-              nn.LeakyReLU(0.1, inplace=True)]
-    
-    if pooling:
-        layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+from torch.autograd import Variable
 
-    return nn.Sequential(*layers)
+from loss import build_target, yolo_loss
+from models.darknet19 import Darknet19, conv_bn_leaky
 
-class YoloV2(nn.Module):
-    def __init__(self, num_classes, anchors=None):
-        super(YoloV2, self).__init__()
-        self.num_classes = num_classes
 
-        if anchors is not None:
-            self.anchors = anchors
-        else:
-            self.anchors = [(1.3221, 1.73145), (3.19275, 4.00944), (5.05587, 8.09892), (9.47112, 4.84053), (11.2364, 10.0071)]
+class ReorgLayer(nn.Module):
+    def __init__(self, stride=2):
+        super(ReorgLayer, self).__init__()
+        self.stride = stride
 
-        self.stage1 = nn.Sequential(conv_block(3, 32, 3, 1, 1, pooling=True),
-                                    conv_block(32, 64, 3, 1, 1, pooling=True),
-                                    conv_block(64, 128, 3, 1, 1),
-                                    conv_block(128, 64, 1, 1, 0),
-                                    conv_block(64, 128, 3, 1, 1, pooling=True),
-                                    conv_block(128, 256, 3, 1, 1),
-                                    conv_block(256, 128, 1, 1, 0),
-                                    conv_block(128, 256, 3, 1, 1, pooling=True),
-                                    conv_block(256, 512, 3, 1, 1),
-                                    conv_block(512, 256, 1, 1, 0),
-                                    conv_block(256, 512, 3, 1, 1),
-                                    conv_block(512, 256, 1, 1, 0),
-                                    conv_block(256, 512, 3, 1, 1))
-        
-        self.stage1_max_pool = nn.MaxPool2d(2, 2)
+    def forward(self, x):
+        B, C, H, W = x.data.size()
+        ws = self.stride
+        hs = self.stride
+        x = x.view(B, C, int(H / hs), hs, int(W / ws), ws).transpose(3, 4).contiguous()
+        x = x.view(B, C, int(H / hs * W / ws), hs * ws).transpose(2, 3).contiguous()
+        x = x.view(B, C, hs * ws, int(H / hs), int(W / ws)).transpose(1, 2).contiguous()
+        x = x.view(B, hs * ws * C, int(H / hs), int(W / ws))
+        return x
 
-        self.stage2 = nn.Sequential(conv_block(512, 1024, 3, 1, 1),
-                                    conv_block(1024, 512, 1, 1, 0),
-                                    conv_block(512, 1024, 3, 1, 1),
-                                    conv_block(1024, 512, 1, 1, 0),
-                                    conv_block(512, 1024, 3, 1, 1),
-                                    conv_block(1024, 1024, 3, 1, 1),
-                                    conv_block(1024, 1024, 3, 1, 1))
 
-        # Using conv_block for stage2_b and stage3
-        self.stage2_conv = conv_block(512, 64, 1, 1, 0)
+class Yolov2(nn.Module):
+    def __init__(self, params):
+        super(Yolov2, self).__init__()
+        self.params = params
+        self.num_classes = len(params["classes"])
+        self.num_anchors = len(params["anchors"])
+        darknet19 = Darknet19()
 
-        self.stage3_conv1 = conv_block(256 + 1024, 1024, 3, 1, 1)
-        self.stage3_conv2 = nn.Conv2d(1024, len(self.anchors) * (5 + num_classes), 1, 1, 0, bias=False)
+        if self.params["backbone_weight"]:
+            weight_path = self.params["backbone_weight"]
+            print(f'load pretrained weight from {weight_path}')
+            darknet19.load_weights(weight_path)
+            print('pretrained weight loaded!\n')
 
-    def forward(self, input):
-        # forward pass using the redefined layers
-        output = self.stage1(input)
-        residual = output
+        # darknet backbone
+        self.conv1 = nn.Sequential(darknet19.layer0, darknet19.layer1, darknet19.layer2, darknet19.layer3, darknet19.layer4)
+        self.conv2 = darknet19.layer5
 
-        output_1 = self.stage1_max_pool(output)
-        output_1 = self.stage2(output_1)
-        output_2 = self.stage2_conv(residual)
+        # detection layers
+        self.conv3 = nn.Sequential(conv_bn_leaky(1024, 1024, kernel_size=3, return_module=True),
+                                   conv_bn_leaky(1024, 1024, kernel_size=3, return_module=True))
 
-        batch_size, num_channel, height, width = output_2.data.size()
-        output_2 = output_2.view(batch_size, int(num_channel / 4), height, 2, width, 2).contiguous()
-        output_2 = output_2.permute(0, 3, 5, 1, 2, 4).contiguous()
-        output_2 = output_2.view(batch_size, -1, int(height / 2), int(width / 2))
+        self.downsampler = conv_bn_leaky(512, 64, kernel_size=1, return_module=True)
 
-        output = torch.cat((output_1, output_2), 1)
-        output = self.stage3_conv1(output)
-        output = self.stage3_conv2(output)
+        self.conv4 = nn.Sequential(conv_bn_leaky(1280, 1024, kernel_size=3, return_module=True),
+                                   nn.Conv2d(1024, (5 + self.num_classes) * self.num_anchors, kernel_size=1))
 
-        return output
+        self.reorg = ReorgLayer()
 
-if __name__ == "__main__":
-    from torchsummary import summary
-    batch_size = 32
-    num_anchors = 5
-    num_classes = 20
+    def forward(self, x, gt_boxes=None, gt_classes=None, num_boxes=None, training=False):
+        """
+        x: Variable
+        gt_boxes, gt_classes, num_boxes: Tensor
+        """
+        x = self.conv1(x)
+        shortcut = self.reorg(self.downsampler(x))
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = torch.cat([shortcut, x], dim=1)
+        out = self.conv4(x)
 
-    model = YoloV2(num_classes=20)
-    summary(model, input_size=(3, 416, 416), device="cpu")
+        ## out : (B, num_anchors * (5 + num_classes), H, W)
+        bsize, _, h, w = out.size()
 
-    dummy_input = torch.randn(batch_size, 3, 416, 416)
-    with torch.no_grad():
-        dummy_output = model(dummy_input)
+        ## 5 + num_class : (t_x, t_y, t_h, t_w, t_c) and (class1_score, class2_score, ...)
+        ## reorganize the output tensor to shape (B, H * W * num_anchors, 5 + num_classes)
+        out = out.permute(0, 2, 3, 1).contiguous().view(bsize, h * w * self.num_anchors, 5 + self.num_classes)
 
-    print(dummy_output.shape)
+        ## `sigmoid` for t_x, t_y, t_c
+        xy_pred = torch.sigmoid(out[:, :, 0:2])
+        conf_pred = torch.sigmoid(out[:, :, 4:5])
 
-    output = dummy_output
-    height = output.data.size(2) ## 13
-    width = output.data.size(3) ## 13
-    output = output.view(batch_size, 5, -1, height * width)
-    print(output.shape)
+        ## `exp` for t_h, t_w
+        hw_pred = torch.exp(out[:, :, 2:4])
 
-    cls = output[:, :, 5:, :].contiguous().view(batch_size * num_anchors, num_classes, height * width).transpose(1, 2).contiguous().view(-1, num_classes)
-    print(cls.shape)
+        ## `softmax` for (class1_score, class2_score, ...)
+        class_score = out[:, :, 5:]
+        class_pred = F.softmax(class_score, dim=-1)
+
+        delta_pred = torch.cat([xy_pred, hw_pred], dim=-1)
+
+        if training:
+            output_variable = (delta_pred, conf_pred, class_score)
+            output_data = [v.data for v in output_variable]
+            gt_data = (gt_boxes, gt_classes, num_boxes)
+            target_data = build_target(output_data, gt_data, h, w, self.params)
+
+            target_variable = [Variable(v) for v in target_data]
+            box_loss, iou_loss, class_loss = yolo_loss(output_variable, target_variable, self.params)
+
+            return box_loss, iou_loss, class_loss
+
+        return delta_pred, conf_pred, class_pred
+
+if __name__ == '__main__':
+    model = Yolov2()
+    im = np.random.randn(1, 3, 416, 416)
+    im_variable = Variable(torch.from_numpy(im)).float()
+    out = model(im_variable)
+    delta_pred, conf_pred, class_pred = out
+    print('delta_pred size:', delta_pred.size())
+    print('conf_pred size:', conf_pred.size())
+    print('class_pred size:', class_pred.size())
+
+
+

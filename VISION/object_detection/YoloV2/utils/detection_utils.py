@@ -1,210 +1,198 @@
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-
-from tqdm import tqdm
-from collections import Counter
-
-def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
-    if box_format == "midpoint":
-        box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
-        box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
-        box1_x2 = boxes_preds[..., 0:1] + boxes_preds[..., 2:3] / 2
-        box1_y2 = boxes_preds[..., 1:2] + boxes_preds[..., 3:4] / 2
-        box2_x1 = boxes_labels[..., 0:1] - boxes_labels[..., 2:3] / 2
-        box2_y1 = boxes_labels[..., 1:2] - boxes_labels[..., 3:4] / 2
-        box2_x2 = boxes_labels[..., 0:1] + boxes_labels[..., 2:3] / 2
-        box2_y2 = boxes_labels[..., 1:2] + boxes_labels[..., 3:4] / 2
-
-    if box_format == "corners":
-        box1_x1 = boxes_preds[..., 0:1]
-        box1_y1 = boxes_preds[..., 1:2]
-        box1_x2 = boxes_preds[..., 2:3]
-        box1_y2 = boxes_preds[..., 3:4]  # (N, 1)
-        box2_x1 = boxes_labels[..., 0:1]
-        box2_y1 = boxes_labels[..., 1:2]
-        box2_x2 = boxes_labels[..., 2:3]
-        box2_y2 = boxes_labels[..., 3:4]
-
-    x1 = torch.max(box1_x1, box2_x1)
-    y1 = torch.max(box1_y1, box2_y1)
-    x2 = torch.min(box1_x2, box2_x2)
-    y2 = torch.min(box1_y2, box2_y2)
-
-    intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
-
-    box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
-    box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
-
-    return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 
-def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
-    assert type(bboxes) == list
-
-    bboxes = [box for box in bboxes if box[1] > threshold]
-    bboxes = sorted(bboxes, key=lambda x: x[1], reverse=True)
-    bboxes_after_nms = []
-
-    while bboxes:
-        chosen_box = bboxes.pop(0)
-
-        bboxes = [box for box in bboxes if box[0] != chosen_box[0] or intersection_over_union(torch.tensor(chosen_box[2:]), torch.tensor(box[2:]), box_format=box_format,) < iou_threshold]
-
-        bboxes_after_nms.append(chosen_box)
-
-    return bboxes_after_nms
-
-
-def mean_average_precision(pred_boxes, true_boxes, iou_threshold=0.5, box_format="midpoint", num_classes=20):
-    average_precisions = []
-
-    epsilon = 1e-6
-    for c in range(num_classes):
-        detections = []
-        ground_truths = []
-        for detection in pred_boxes:
-            if detection[1] == c:
-                detections.append(detection)
-
-        for true_box in true_boxes:
-            if true_box[1] == c:
-                ground_truths.append(true_box)
-
-        amount_bboxes = Counter([gt[0] for gt in ground_truths])
-
-        for key, val in amount_bboxes.items():
-            amount_bboxes[key] = torch.zeros(val)
-
-        detections.sort(key=lambda x: x[2], reverse=True)
-        TP = torch.zeros((len(detections)))
-        FP = torch.zeros((len(detections)))
-        total_true_bboxes = len(ground_truths)
-        
-        if total_true_bboxes == 0:
-            continue
-
-        for detection_idx, detection in enumerate(detections):
-            ground_truth_img = [bbox for bbox in ground_truths if bbox[0] == detection[0]]
-
-            num_gts = len(ground_truth_img)
-            best_iou = 0
-
-            for idx, gt in enumerate(ground_truth_img):
-                iou = intersection_over_union(torch.tensor(detection[3:]), torch.tensor(gt[3:]), box_format=box_format)
-
-                if iou > best_iou:
-                    best_iou = iou
-                    best_gt_idx = idx
-
-            if best_iou > iou_threshold:
-                if amount_bboxes[detection[0]][best_gt_idx] == 0:
-                    TP[detection_idx] = 1
-                    amount_bboxes[detection[0]][best_gt_idx] = 1
-                else:
-                    FP[detection_idx] = 1
-
-            else:
-                FP[detection_idx] = 1
-
-        TP_cumsum = torch.cumsum(TP, dim=0)
-        FP_cumsum = torch.cumsum(FP, dim=0)
-        recalls = TP_cumsum / (total_true_bboxes + epsilon)
-        precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
-        precisions = torch.cat((torch.tensor([1]), precisions))
-        recalls = torch.cat((torch.tensor([0]), recalls))
-        # torch.trapz for numerical integration
-        average_precisions.append(torch.trapz(precisions, recalls))
-
-    return sum(average_precisions) / len(average_precisions)
-
-
-def get_bboxes(dataloader, model, iou_threshold, threshold, box_format="midpoint", device="cuda"):
-    model.eval()
-
-    train_idx = 0
-    all_pred_boxes, all_true_boxes = [], []
-    for x, y in tqdm(dataloader, desc="get_bboxes", leave=False):
-        x = x.to(device)
-        y = y.to(device)
-
-        with torch.no_grad():
-            predictions = model(x)
-
-        batch_size = x.shape[0]
-
-        ## Cell 기반 예측을 일반 박스 형태로 변환한다.
-        true_bboxes = cellboxes_to_boxes(y)
-        bboxes = cellboxes_to_boxes(predictions)
-
-        for idx in range(batch_size):
-            nms_boxes = non_max_suppression(bboxes[idx], iou_threshold=iou_threshold, threshold=threshold, box_format=box_format)
-
-            for nms_box in nms_boxes:
-                all_pred_boxes.append([train_idx] + nms_box)
-
-            for box in true_bboxes[idx]:
-                if box[1] > threshold:
-                    all_true_boxes.append([train_idx] + box)
-
-            train_idx += 1
-
-    return all_pred_boxes, all_true_boxes
-
-
-def convert_cellboxes(predictions, S=7):
+def box_ious(box1, box2):
     """
-    7 * 7 * 30
-        - 0 ~ 19 : class_scores
-        - 20 : confidence score1, 
-        - 21 ~ 23 : coords1, 
-        - 25 : confidence score2,
-        - 26 ~ 29 : coords2
-    predictions : [batch_size, 1470]
+    Implement the intersection over union (IoU) between box1 and box2 (x1, y1, x2, y2)
+
+    Arguments:
+    box1 -- tensor of shape (N, 4), first set of boxes
+    box2 -- tensor of shape (K, 4), second set of boxes
+
+    Returns:
+    ious -- tensor of shape (N, K), ious between boxes
     """
-    predictions = predictions.to("cpu")
 
-    batch_size = predictions.shape[0]
-    predictions = predictions.reshape(batch_size, 7, 7, 30) ## [batch_size, 7, 7, 30]
+    N = box1.size(0)
+    K = box2.size(0)
 
-    bboxes1 = predictions[..., 21:25] ## 모든 grid cell의 첫번째 box
-    bboxes2 = predictions[..., 26:30] ## 모든 grid cell의 두번째 box
-    scores = torch.cat((predictions[..., 20].unsqueeze(0), predictions[..., 25].unsqueeze(0)), dim=0) ## [[1, conf_score1], [1, conf_score2]]
+    # when torch.max() takes tensor of different shape as arguments, it will broadcasting them.
+    xi1 = torch.max(box1[:, 0].view(N, 1), box2[:, 0].view(1, K))
+    yi1 = torch.max(box1[:, 1].view(N, 1), box2[:, 1].view(1, K))
+    xi2 = torch.min(box1[:, 2].view(N, 1), box2[:, 2].view(1, K))
+    yi2 = torch.min(box1[:, 3].view(N, 1), box2[:, 3].view(1, K))
 
-    best_box = scores.argmax(0).unsqueeze(-1) ## 각각의 cell이 예측한 두 개의 box 중 더 높은 confidence score인 박스 index를 고른다.(0 또는 1)
-    best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2 ## 첫번째 box가 선택되면 bboxes1 * (1 - 0) + 0 * bboxes2
-    
+    # we want to compare the compare the value with 0 elementwise. However, we can't
+    # simply feed int 0, because it will invoke the function torch(max, dim=int) which is not
+    # what we want.
+    # To feed a tensor 0 of same type and device with box1 and box2
+    # we use tensor.new().fill_(0)
+
+    iw = torch.max(xi2 - xi1, box1.new(1).fill_(0))
+    ih = torch.max(yi2 - yi1, box1.new(1).fill_(0))
+
+    inter = iw * ih
+
+    box1_area = (box1[:, 2] - box1[:, 0]) * (box1[:, 3] - box1[:, 1])
+    box2_area = (box2[:, 2] - box2[:, 0]) * (box2[:, 3] - box2[:, 1])
+
+    box1_area = box1_area.view(N, 1)
+    box2_area = box2_area.view(1, K)
+
+    union_area = box1_area + box2_area - inter
+
+    ious = inter / union_area
+
+    return ious
+
+
+def xxyy2xywh(box):
     """
-        - torch.arange(7): 0부터 6까지의 숫자를 포함하는 텐서를 생성. 이는 7x7 그리드의 각 행에 대한 인덱스에 해당.
-        - repeat(batch_size, 7, 1): 이 텐서를 배치 크기만큼 반복하여 각 이미지에 대해 7x7 그리드를 생성. [batch_size, 7, 7] 마지막 7은 [0, 1, 2, 3, 4, 5, 6]으로 구성
-        - unsqueeze(-1): 마지막 차원을 추가하여 텐서의 형상을 조정. [batch_size, 7, 7, 1]
+    Convert the box (x1, y1, x2, y2) encoding format to (c_x, c_y, w, h) format
+
+    Arguments:
+    box: tensor of shape (N, 4), boxes of (x1, y1, x2, y2) format
+
+    Returns:
+    xywh_box: tensor of shape (N, 4), boxes of (c_x, c_y, w, h) format
     """
-    cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1)
 
-    x = 1 / S * (best_boxes[..., :1] + cell_indices) ## grid cell의 중심좌표 x에 grid cell idx를 더하고 S로 나눠서 bounding box 중심으로 변환.
-    y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3)) ## [batch_size, 7, 7, 1]로 첫번째 7과 두번째 7의 위치를 변환함. 이를 통해 bounding box의 중심으로 변환하는데 사용한다.
-    wh = 1 / S * best_boxes[..., 2:4]
-    converted_bboxes = torch.cat((x, y, wh), dim=-1)
+    c_x = (box[:, 2] + box[:, 0]) / 2
+    c_y = (box[:, 3] + box[:, 1]) / 2
+    w = box[:, 2] - box[:, 0]
+    h = box[:, 3] - box[:, 1]
 
-    predicted_class = predictions[..., :20].argmax(-1).unsqueeze(-1) ## 예측된 class_idx
-    best_confidence = torch.max(predictions[..., 20], predictions[..., 25]).unsqueeze(-1) ## confidence score
-    converted_preds = torch.cat((predicted_class, best_confidence, converted_bboxes), dim=-1)
+    c_x = c_x.view(-1, 1)
+    c_y = c_y.view(-1, 1)
+    w = w.view(-1, 1)
+    h = h.view(-1, 1)
 
-    return converted_preds
+    xywh_box = torch.cat([c_x, c_y, w, h], dim=1)
+    return xywh_box
+
+
+def xywh2xxyy(box):
+    """
+    Convert the box encoding format form (c_x, c_y, w, h) to (x1, y1, x2, y2)
+
+    Arguments:
+    box -- tensor of shape (N, 4), box of (c_x, c_y, w, h) format
+
+    Returns:
+    xxyy_box -- tensor of shape (N, 4), box of (x1, y1, x2, y2) format
+    """
+
+    x1 = box[:, 0] - (box[:, 2]) / 2
+    y1 = box[:, 1] - (box[:, 3]) / 2
+    x2 = box[:, 0] + (box[:, 2]) / 2
+    y2 = box[:, 1] + (box[:, 3]) / 2
+
+    x1 = x1.view(-1, 1)
+    y1 = y1.view(-1, 1)
+    x2 = x2.view(-1, 1)
+    y2 = y2.view(-1, 1)
+
+    xxyy_box = torch.cat([x1, y1, x2, y2], dim=1)
+    return xxyy_box
+
+
+def box_transform(box1, box2):
+    """
+    Calculate the delta values σ(t_x), σ(t_y), exp(t_w), exp(t_h) used for transforming box1 to  box2
+
+    Arguments:
+    box1 -- tensor of shape (N, 4) first set of boxes (c_x, c_y, w, h)
+    box2 -- tensor of shape (N, 4) second set of boxes (c_x, c_y, w, h)
+
+    Returns:
+    deltas -- tensor of shape (N, 4) delta values (t_x, t_y, t_w, t_h)
+                   used for transforming boxes to reference boxes
+    """
+
+    t_x = box2[:, 0] - box1[:, 0]
+    t_y = box2[:, 1] - box1[:, 1]
+    t_w = box2[:, 2] / box1[:, 2]
+    t_h = box2[:, 3] / box1[:, 3]
+
+    t_x = t_x.view(-1, 1)
+    t_y = t_y.view(-1, 1)
+    t_w = t_w.view(-1, 1)
+    t_h = t_h.view(-1, 1)
+
+    # σ(t_x), σ(t_y), exp(t_w), exp(t_h)
+    deltas = torch.cat([t_x, t_y, t_w, t_h], dim=1)
+    return deltas
+
+
+def box_transform_inv(box, deltas):
+    """
+    apply deltas to box to generate predicted boxes
+
+    Arguments:
+    box -- tensor of shape (N, 4), boxes, (c_x, c_y, w, h)
+    deltas -- tensor of shape (N, 4), deltas, (σ(t_x), σ(t_y), exp(t_w), exp(t_h))
+
+    Returns:
+    pred_box -- tensor of shape (N, 4), predicted boxes, (c_x, c_y, w, h)
+    """
+
+    c_x = box[:, 0] + deltas[:, 0]
+    c_y = box[:, 1] + deltas[:, 1]
+    w = box[:, 2] * deltas[:, 2]
+    h = box[:, 3] * deltas[:, 3]
+
+    c_x = c_x.view(-1, 1)
+    c_y = c_y.view(-1, 1)
+    w = w.view(-1, 1)
+    h = h.view(-1, 1)
+
+    pred_box = torch.cat([c_x, c_y, w, h], dim=-1)
+    return pred_box
+
+
+def generate_all_anchors(anchors, H, W):
+    """
+    Generate dense anchors given grid defined by (H,W)
+
+    Arguments:
+    anchors -- tensor of shape (num_anchors, 2), pre-defined anchors (pw, ph) on each cell
+    H -- int, grid height
+    W -- int, grid width
+
+    Returns:
+    all_anchors -- tensor of shape (H * W * num_anchors, 4) dense grid anchors (c_x, c_y, w, h)
+    """
+
+    # number of anchors per cell
+    A = anchors.size(0)
+
+    # number of cells
+    K = H * W
+
+    shift_x, shift_y = torch.meshgrid([torch.arange(0, W), torch.arange(0, H)], indexing='ij')
+
+    # transpose shift_x and shift_y because we want our anchors to be organized in H x W order
+    shift_x = shift_x.t().contiguous()
+    shift_y = shift_y.t().contiguous()
+
+    # shift_x is a long tensor, c_x is a float tensor
+    c_x = shift_x.float()
+    c_y = shift_y.float()
+
+    centers = torch.cat([c_x.view(-1, 1), c_y.view(-1, 1)], dim=-1)  # tensor of shape (h * w, 2), (cx, cy)
+
+    # add anchors width and height to centers
+    all_anchors = torch.cat([centers.view(K, 1, 2).expand(K, A, 2),
+                             anchors.view(1, A, 2).expand(K, A, 2)], dim=-1)
+
+    all_anchors = all_anchors.view(-1, 4)
+
+    return all_anchors
 
 
 
-def cellboxes_to_boxes(out, S=7):
-    ## out : [batch_size, S, S, (B * 5 + C)]
-    converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1) ## [batch_size, 49, 30]
-    converted_pred[..., 0] = converted_pred[..., 0].long() ## class idx들을 정수형으로 변환.
-    
-    all_bboxes = []
-    for ex_idx in range(out.shape[0]):
-        bboxes = []
-        for bbox_idx in range(S * S):
-            bboxes.append([x.item() for x in converted_pred[ex_idx, bbox_idx, :]]) ## class_dix, confidence_score, x, y, w, h를 boxes list에 담는다.
-        all_bboxes.append(bboxes)
 
-    return all_bboxes
+
+
+
+

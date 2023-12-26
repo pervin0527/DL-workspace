@@ -1,208 +1,201 @@
-import math
 import torch
-from torch import nn
+import torch.nn.functional as F
 
-class YoloLoss(nn.modules.loss._Loss):
-    # The loss I borrow from LightNet repo.
-    def __init__(self, num_classes, anchors, reduction=32, coord_scale=1.0, noobject_scale=1.0, object_scale=5.0, class_scale=1.0, thresh=0.6):
-        super(YoloLoss, self).__init__()
-        self.num_classes = num_classes
-        self.num_anchors = len(anchors)
-        self.anchor_step = len(anchors[0])
-        self.anchors = torch.Tensor(anchors)
-        self.reduction = reduction
-
-        self.coord_scale = coord_scale
-        self.noobject_scale = noobject_scale
-        self.object_scale = object_scale
-        self.class_scale = class_scale
-        self.thresh = thresh
-
-    def forward(self, output, target):
-        """
-        STEP 1. 모델의 예측 offst (tx, ty, tw, th, to)을 이용해 예측 바운딩 박스를 만든다.
-        """
-        ## output : [-1, 125, 13, 13]
-        ## 125 = 5[num_boxes per grid_cell] * (coords[x, y, w, h] + confidence_score + num_classes[20]) 
-        batch_size = output.data.size(0) ## batch_size
-        height = output.data.size(2) ## 13
-        width = output.data.size(3) ## 13
-
-        ##  (t_x, t_y, t_w, t_h), conf_score, classification_scores를 가져온다. -> 즉 anchor를 얼마나 이동시키고 조절할지에 대한 Offset이다.
-        ## [batch_size, 125, 13, 13] -> [batch_size, 5, 25, 169] = [batch_size, num_boxes, (num_classes + coords + conf_score), grid_cells]
-        output = output.view(batch_size, self.num_anchors, -1, height * width)
-
-        coord = torch.zeros_like(output[:, :, :4, :]) ## [batch_size, 5, 4, 169] + zeros
-        coord[:, :, :2, :] = output[:, :, :2, :].sigmoid() ## tx, ty에 Sigmoid 적용.
-        coord[:, :, 2:4, :] = output[:, :, 2:4, :] ## tw, th
-        conf = output[:, :, 4, :].sigmoid() ## predict confidence score.
-
-        ## classification scores
-        cls = output[:, :, 5:, :].contiguous().view(batch_size * self.num_anchors, self.num_classes, height * width) ## [batch_size, 125, 20, 169] -> [batch_size * 5, 20, 169]
-        cls = cls.transpose(1, 2).contiguous().view(-1, self.num_classes) ## [batch_size * 5, 169, 20] -> [(batch_size * 5 * 169), 20]
-
-        ## Create prediction boxes
-        pred_boxes = torch.FloatTensor(batch_size * self.num_anchors * height * width, 4) ## [bathc_size * 5 * 13 * 13, 4]
-        ## grid cell의 index 생성.
-        lin_x = torch.arange(0, width).repeat(height, 1).view(height * width)
-        lin_y = torch.arange(0, height).repeat(width, 1).t().contiguous().view(height * width)
-        ## 정의된 앵커 박스의 너비와 높이를 가져와서 num_anchors x 1 크기의 텐서로 변환
-        anchor_w = self.anchors[:, 0].contiguous().view(self.num_anchors, 1)
-        anchor_h = self.anchors[:, 1].contiguous().view(self.num_anchors, 1)
-
-        if torch.cuda.is_available():
-            pred_boxes = pred_boxes.cuda()
-            lin_x = lin_x.cuda()
-            lin_y = lin_y.cuda()
-            anchor_w = anchor_w.cuda()
-            anchor_h = anchor_h.cuda()
-
-        ## 모델의 출력인 coord에서 바운딩 박스의 중심 좌표 (x, y)와 크기 (width, height)를 실제 좌표로 변환.
-        pred_boxes[:, 0] = (coord[:, :, 0].detach() + lin_x).view(-1) ## anchor box의 중심점을 모델이 예측한 offset만큼 이동 시킨다.
-        pred_boxes[:, 1] = (coord[:, :, 1].detach() + lin_y).view(-1)
-
-        pred_boxes[:, 2] = (coord[:, :, 2].detach().exp() * anchor_w).view(-1) ## anchor box의 height, width에 예측한 offset을 반영해 조절한다.
-        pred_boxes[:, 3] = (coord[:, :, 3].detach().exp() * anchor_h).view(-1)
-        pred_boxes = pred_boxes.cpu()
-        """ 여기까지 t_x, t_y, t_w, t_h, t_o를 활용해 b_x, h_y, b_h, b_w를 만들었다."""
-
-        """
-        STEP 2. 실제 ground_truth 바운딩 박스와 가장 일치하는 앵커를 찾아 신뢰도, 좌표, 클래스 마스크 및 타겟 값을 설정한다.
-        """
-        coord_mask, conf_mask, cls_mask, tcoord, tconf, tcls = self.build_targets(pred_boxes, target, height, width)
-        coord_mask = coord_mask.expand_as(tcoord)
-        tcls = tcls[cls_mask].view(-1).long()
-        cls_mask = cls_mask.view(-1, 1).repeat(1, self.num_classes)
-
-        if torch.cuda.is_available():
-            tcoord = tcoord.cuda()
-            tconf = tconf.cuda()
-            coord_mask = coord_mask.cuda()
-            conf_mask = conf_mask.cuda()
-            tcls = tcls.cuda()
-            cls_mask = cls_mask.cuda()
-
-        conf_mask = conf_mask.sqrt()
-        cls = cls[cls_mask].view(-1, self.num_classes)
-
-        """
-        STEP 3. loss 계산.
-        """
-        mse = nn.MSELoss(reduction="sum")
-        ce = nn.CrossEntropyLoss(reduction="sum")
-        self.loss_coord = self.coord_scale * mse(coord * coord_mask, tcoord * coord_mask) / batch_size
-        self.loss_conf = mse(conf * conf_mask, tconf * conf_mask) / batch_size
-        self.loss_cls = self.class_scale * 2 * ce(cls, tcls) / batch_size
-        self.loss_tot = self.loss_coord + self.loss_conf + self.loss_cls
-
-        return self.loss_tot, self.loss_coord, self.loss_conf, self.loss_cls
-
-    def build_targets(self, pred_boxes, ground_truth, height, width):
-        batch_size = len(ground_truth)
-        """
-        pred_boxes : [batch_size * num_anchors * heigt * width, 4]
-        ground_truth : [batch_size] 각각의 원소는 [num_objects, 5]
-
-        - conf_mask : confidence score 마스크. 모든 값을 1로 초기화하고 noobject_scale을 곱한다.(객체가 존재하지 않는다고 가정)
-        - coord_mask : 바운딩 박스 좌표 마스크.
-        - cls_mask : class scores 마스크.
-        - tcoord : 실제 바운딩 박스의 좌표 마스크.
-        - tconf : 실제 객체의 존재 여부를 나타내는 마스크.
-        - tcls: 타겟 클래스는 실제 객체의 클래스 정보를 저장.
-        """
-
-        conf_mask = torch.ones(batch_size, self.num_anchors, height * width, requires_grad=False) * self.noobject_scale ## [batch_size, num_anchors, 169]        
-        coord_mask = torch.zeros(batch_size, self.num_anchors, 1, height * width, requires_grad=False) ## [batch_size, num_anchors, 1, 169]
-        cls_mask = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False).bool() ## [batch_size, num_anchors, 169]
-        tcoord = torch.zeros(batch_size, self.num_anchors, 4, height * width, requires_grad=False) ## [batch_size, num_anchors, 4, 169]
-        tconf = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False) ## [batch_size, num_anchors, 169]
-        tcls = torch.zeros(batch_size, self.num_anchors, height * width, requires_grad=False) ## [batch_size, nnum_anchors, 169]
-
-        ## 0 ~ 31 batch에 포함된 각각의 ground-truth에 접근.
-        for b in range(batch_size):
-            if len(ground_truth[b]) == 0: ## 현재 이미지에 ground truth가 없으면 object가 없는 것이므로 넘어간다.
-                continue
-
-            current_pred_box = pred_boxes[b * (self.num_anchors * height * width) : (b + 1) * (self.num_anchors * height * width)] ## 현재 이미지에 대한 예측 바운딩 박스를 선택.
-            if self.anchor_step == 4:
-                anchors = self.anchors.clone()
-                anchors[:, :2] = 0
-            else:
-                anchors = torch.cat([torch.zeros_like(self.anchors), self.anchors], 1) ## 0으로 채워진 텐서와 원래의 앵커 텐서를 연결. [0] * 5와 [(w, h)] * 5
-
-            ## loss 계산을 위해 ground_truth의 xmin, ymin, xmax, ymax를 grid에 맞춰 변환한다.
-            gt = torch.zeros(len(ground_truth[b]), 4) ## [object의 수, 4]
-            for i, anno in enumerate(ground_truth[b]):
-                gt[i, 0] = (anno[0] + anno[2] / 2) / self.reduction ## ((xmin + xmax) / 2) / 32
-                gt[i, 1] = (anno[1] + anno[3] / 2) / self.reduction ## ((ymin + ymax) / 2) / 32
-                gt[i, 2] = anno[2] / self.reduction ## width / 32
-                gt[i, 3] = anno[3] / self.reduction ## height / 32
-
-            """
-            각각의 그리드 셀에 대한 모델의 예측된 바운딩 박스(pred_box)와 실제 바운딩 박스(ground truth, gt) 간의 일치도를 평가로, 모델이 각 그리드 셀에서 객체를 얼마나 정확하게 감지했는지를 측정하는 데 사용.
-            """
-            iou_gt_pred = bbox_ious(gt, current_pred_box) ## Ground truth 바운딩 박스와 예측된 바운딩 박스 간의 IOU(Intersection over Union)를 계산.
-            mask = (iou_gt_pred > self.thresh).sum(0) >= 1 ## 설정한 threshold보다 iou가 높은 박스의 수를 측정. 예측된 바운딩 박스가 최소 한 개의 ground truth 박스와 임계값 이상의 IOU를 가지는 경우를 찾는다.
-            conf_mask[b][mask.view_as(conf_mask[b])] = 0 ## object가 있는 곳을 conf_mask에 0으로 표기.
-
-            """
-            실제 바운딩 박스와 정의된 각 앵커 박스 사이의 최적의 일치를 찾기 위해 수행.
-            """
-            gt_wh = gt.clone()
-            gt_wh[:, :2] = 0 ## gt 박스의 너비와 높이만을 사용하기 위해 중심 좌표를 0으로 설정
-            iou_gt_anchors = bbox_ious(gt_wh, anchors) ## gt 박스와 앵커 간의 IOU를 계산
-            _, best_anchors = iou_gt_anchors.max(1) ## 각 ground truth 바운딩 박스에 대해 가장 높은 IOU 값을 가진 앵커를 찾는다.
-
-            """
-            선택된 앵커 박스에 대해, 각 ground truth 바운딩 박스와의 차이를 마스크 행렬(coord_mask, conf_mask, cls_mask)에 저장.
-            """
-            for i, anno in enumerate(ground_truth[b]): ## 각 ground truth 바운딩 박스에 대해
-                ## gt의 중심 좌표를 그리드 셀 크기에 맞게 조정.
-                gi = min(width - 1, max(0, int(gt[i, 0])))
-                gj = min(height - 1, max(0, int(gt[i, 1])))
-
-                ## 각 ground truth 바운딩 박스에 가장 잘 맞는 앵커 인덱스를 선택.
-                best_n = best_anchors[i]
-                
-                ## 선택된 앵커에 대한 IOU 값을 계산. 이 값은 예측된 바운딩 박스와 실제 ground truth 바운딩 박스 간의 일치 정도를 나타낸다.
-                iou = iou_gt_pred[i][best_n * height * width + gj * width + gi]
-
-                ## 해당 좌표에 객체가 존재함을 나타내는 마스크를 설정
-                coord_mask[b][best_n][0][gj * width + gi] = 1
-
-                ## 클래스 마스크를 설정
-                cls_mask[b][best_n][gj * width + gi] = 1
-
-                ## object 존재에 대한 신뢰도 마스크를 설정
-                conf_mask[b][best_n][gj * width + gi] = self.object_scale
-
-                ##  ground truth 바운딩 박스의 실제 좌표와 해당 그리드 셀, 앵커 박스의 좌표 사이의 차이를 계산하고 저장.
-                tcoord[b][best_n][0][gj * width + gi] = gt[i, 0] - gi
-                tcoord[b][best_n][1][gj * width + gi] = gt[i, 1] - gj
-                tcoord[b][best_n][2][gj * width + gi] = math.log(max(gt[i, 2], 1.0) / self.anchors[best_n, 0])
-                tcoord[b][best_n][3][gj * width + gi] = math.log(max(gt[i, 3], 1.0) / self.anchors[best_n, 1])
-
-                ## 계산된 IOU 값을 신뢰도 타겟으로 설정.
-                tconf[b][best_n][gj * width + gi] = iou
-
-                ## 각 ground truth 바운딩 박스의 클래스 인덱스를 설정.
-                tcls[b][best_n][gj * width + gi] = int(anno[4])
-
-        return coord_mask, conf_mask, cls_mask, tcoord, tconf, tcls
+from utils.detection_utils import generate_all_anchors, xywh2xxyy, box_transform_inv, box_ious, xxyy2xywh, box_transform
 
 
-def bbox_ious(boxes1, boxes2):
-    b1x1, b1y1 = (boxes1[:, :2] - (boxes1[:, 2:4] / 2)).split(1, 1)
-    b1x2, b1y2 = (boxes1[:, :2] + (boxes1[:, 2:4] / 2)).split(1, 1)
-    b2x1, b2y1 = (boxes2[:, :2] - (boxes2[:, 2:4] / 2)).split(1, 1)
-    b2x2, b2y2 = (boxes2[:, :2] + (boxes2[:, 2:4] / 2)).split(1, 1)
+def build_target(output, gt_data, H, W, train_params):
+    """
+    Build the training target for output tensor
 
-    dx = (b1x2.min(b2x2.t()) - b1x1.max(b2x1.t())).clamp(min=0)
-    dy = (b1y2.min(b2y2.t()) - b1y1.max(b2y1.t())).clamp(min=0)
-    intersections = dx * dy
+    Arguments:
 
-    areas1 = (b1x2 - b1x1) * (b1y2 - b1y1)
-    areas2 = (b2x2 - b2x1) * (b2y2 - b2y1)
-    unions = (areas1 + areas2.t()) - intersections
+    output_data -- tuple (delta_pred_batch, conf_pred_batch, class_pred_batch), output data of the yolo network
+    gt_data -- tuple (gt_boxes_batch, gt_classes_batch, num_boxes_batch), ground truth data
 
-    return intersections / unions
+    delta_pred_batch -- tensor of shape (B, H * W * num_anchors, 4), predictions of delta σ(t_x), σ(t_y), σ(t_w), σ(t_h)
+    conf_pred_batch -- tensor of shape (B, H * W * num_anchors, 1), prediction of IoU score σ(t_c)
+    class_score_batch -- tensor of shape (B, H * W * num_anchors, num_classes), prediction of class scores (cls1, cls2, ..)
+
+    gt_boxes_batch -- tensor of shape (B, N, 4), ground truth boxes, normalized values
+                       (x1, y1, x2, y2) range 0~1
+    gt_classes_batch -- tensor of shape (B, N), ground truth classes (cls)
+    num_obj_batch -- tensor of shape (B, 1). number of objects
+
+
+    Returns:
+    iou_target -- tensor of shape (B, H * W * num_anchors, 1)
+    iou_mask -- tensor of shape (B, H * W * num_anchors, 1)
+    box_target -- tensor of shape (B, H * W * num_anchors, 4)
+    box_mask -- tensor of shape (B, H * W * num_anchors, 1)
+    class_target -- tensor of shape (B, H * W * num_anchors, 1)
+    class_mask -- tensor of shape (B, H * W * num_anchors, 1)
+
+    """
+    delta_pred_batch = output[0]
+    conf_pred_batch = output[1]
+    class_score_batch = output[2]
+
+    gt_boxes_batch = gt_data[0]
+    gt_classes_batch = gt_data[1]
+    num_boxes_batch = gt_data[2]
+
+    bsize = delta_pred_batch.size(0)
+
+    num_anchors = 5  # hard code for now
+
+    # initial the output tensor
+    # we use `tensor.new()` to make the created tensor has the same devices and data type as input tensor's
+    # what tensor is used doesn't matter
+    iou_target = delta_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
+    iou_mask = delta_pred_batch.new_ones((bsize, H * W, num_anchors, 1)) * train_params["noobject_scale"]
+
+    box_target = delta_pred_batch.new_zeros((bsize, H * W, num_anchors, 4))
+    box_mask = delta_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
+
+    class_target = conf_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
+    class_mask = conf_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
+
+    # get all the anchors
+
+    anchors = torch.FloatTensor(train_params["anchors"])
+
+    # note: the all anchors' xywh scale is normalized by the grid width and height, i.e. 13 x 13
+    # this is very crucial because the predict output is normalized to 0~1, which is also
+    # normalized by the grid width and height
+    all_grid_xywh = generate_all_anchors(anchors, H, W) # shape: (H * W * num_anchors, 4), format: (x, y, w, h)
+    all_grid_xywh = delta_pred_batch.new(*all_grid_xywh.size()).copy_(all_grid_xywh)
+    all_anchors_xywh = all_grid_xywh.clone()
+    all_anchors_xywh[:, 0:2] += 0.5
+    all_anchors_xxyy = xywh2xxyy(all_anchors_xywh)
+
+    # process over batches
+    for b in range(bsize):
+        num_obj = num_boxes_batch[b].item()
+        delta_pred = delta_pred_batch[b]
+        gt_boxes = gt_boxes_batch[b][:num_obj, :]
+        gt_classes = gt_classes_batch[b][:num_obj]
+
+        # rescale ground truth boxes
+        gt_boxes[:, 0::2] *= W
+        gt_boxes[:, 1::2] *= H
+
+
+        # step 1: process IoU target
+
+        # apply delta_pred to pre-defined anchors
+        all_anchors_xywh = all_anchors_xywh.view(-1, 4)
+        box_pred = box_transform_inv(all_grid_xywh, delta_pred)
+        box_pred = xywh2xxyy(box_pred)
+
+        # for each anchor, its iou target is corresponded to the max iou with any gt boxes
+        ious = box_ious(box_pred, gt_boxes) # shape: (H * W * num_anchors, num_obj)
+        ious = ious.view(-1, num_anchors, num_obj)
+        max_iou, _ = torch.max(ious, dim=-1, keepdim=True) # shape: (H * W, num_anchors, 1)
+
+        # iou_target[b] = max_iou
+        # we ignore the gradient of predicted boxes whose IoU with any gt box is greater than cfg.threshold
+        iou_thresh_filter = max_iou.view(-1) > train_params["thres"]
+        n_pos = torch.nonzero(iou_thresh_filter).numel()
+
+        if n_pos > 0:
+            iou_mask[b][max_iou >= train_params["thres"]] = 0
+
+        # step 2: process box target and class target
+        # calculate overlaps between anchors and gt boxes
+        overlaps = box_ious(all_anchors_xxyy, gt_boxes).view(-1, num_anchors, num_obj)
+        gt_boxes_xywh = xxyy2xywh(gt_boxes)
+
+        # iterate over all objects
+
+        for t in range(gt_boxes.size(0)):
+            # compute the center of each gt box to determine which cell it falls on
+            # assign it to a specific anchor by choosing max IoU
+
+            gt_box_xywh = gt_boxes_xywh[t]
+            gt_class = gt_classes[t]
+            cell_idx_x, cell_idx_y = torch.floor(gt_box_xywh[:2])
+            cell_idx = cell_idx_y * W + cell_idx_x
+            cell_idx = cell_idx.long()
+
+            # update box_target, box_mask
+            overlaps_in_cell = overlaps[cell_idx, :, t]
+            argmax_anchor_idx = torch.argmax(overlaps_in_cell)
+
+            assigned_grid = all_grid_xywh.view(-1, num_anchors, 4)[cell_idx, argmax_anchor_idx, :].unsqueeze(0)
+            gt_box = gt_box_xywh.unsqueeze(0)
+            target_t = box_transform(assigned_grid, gt_box)
+
+            box_target[b, cell_idx, argmax_anchor_idx, :] = target_t.unsqueeze(0)
+            box_mask[b, cell_idx, argmax_anchor_idx, :] = 1
+
+            # update cls_target, cls_mask
+            class_target[b, cell_idx, argmax_anchor_idx, :] = gt_class
+            class_mask[b, cell_idx, argmax_anchor_idx, :] = 1
+
+            # update iou target and iou mask
+            iou_target[b, cell_idx, argmax_anchor_idx, :] = max_iou[cell_idx, argmax_anchor_idx, :]
+            iou_mask[b, cell_idx, argmax_anchor_idx, :] = train_params["object_scale"]
+
+    return iou_target.view(bsize, -1, 1), \
+           iou_mask.view(bsize, -1, 1), \
+           box_target.view(bsize, -1, 4),\
+           box_mask.view(bsize, -1, 1), \
+           class_target.view(bsize, -1, 1).long(), \
+           class_mask.view(bsize, -1, 1)
+
+
+def yolo_loss(output, target, train_params):
+    """
+    Build yolo loss
+
+    Arguments:
+    output -- tuple (delta_pred, conf_pred, class_score), output data of the yolo network
+    target -- tuple (iou_target, iou_mask, box_target, box_mask, class_target, class_mask) target label data
+
+    delta_pred -- Variable of shape (B, H * W * num_anchors, 4), predictions of delta σ(t_x), σ(t_y), σ(t_w), σ(t_h)
+    conf_pred -- Variable of shape (B, H * W * num_anchors, 1), prediction of IoU score σ(t_c)
+    class_score -- Variable of shape (B, H * W * num_anchors, num_classes), prediction of class scores (cls1, cls2 ..)
+
+    iou_target -- Variable of shape (B, H * W * num_anchors, 1)
+    iou_mask -- Variable of shape (B, H * W * num_anchors, 1)
+    box_target -- Variable of shape (B, H * W * num_anchors, 4)
+    box_mask -- Variable of shape (B, H * W * num_anchors, 1)
+    class_target -- Variable of shape (B, H * W * num_anchors, 1)
+    class_mask -- Variable of shape (B, H * W * num_anchors, 1)
+
+    Return:
+    loss -- yolo overall multi-task loss
+    """
+
+    delta_pred_batch = output[0]
+    conf_pred_batch = output[1]
+    class_score_batch = output[2]
+
+    iou_target = target[0]
+    iou_mask = target[1]
+    box_target = target[2]
+    box_mask = target[3]
+    class_target = target[4]
+    class_mask = target[5]
+
+    b, _, num_classes = class_score_batch.size()
+    class_score_batch = class_score_batch.view(-1, num_classes)
+    class_target = class_target.view(-1)
+    class_mask = class_mask.view(-1)
+
+    # ignore the gradient of noobject's target
+    class_keep = class_mask.nonzero().squeeze(1)
+    class_score_batch_keep = class_score_batch[class_keep, :]
+    class_target_keep = class_target[class_keep]
+
+    # if cfg.debug:
+    #     print(class_score_batch_keep)
+    #     print(class_target_keep)
+
+    # calculate the loss, normalized by batch size.
+    box_loss = 1 / b * train_params["coord_scale"] * F.mse_loss(delta_pred_batch * box_mask, box_target * box_mask, reduction='sum') / 2.0
+    iou_loss = 1 / b * F.mse_loss(conf_pred_batch * iou_mask, iou_target * iou_mask, reduction='sum') / 2.0
+    class_loss = 1 / b * train_params["class_scale"] * F.cross_entropy(class_score_batch_keep, class_target_keep, reduction='sum')
+
+    return box_loss, iou_loss, class_loss

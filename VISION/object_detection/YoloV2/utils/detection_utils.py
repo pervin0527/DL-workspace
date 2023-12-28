@@ -121,6 +121,7 @@ def box_transform(box1, box2):
 
     # σ(t_x), σ(t_y), exp(t_w), exp(t_h)
     deltas = torch.cat([t_x, t_y, t_w, t_h], dim=1)
+    
     return deltas
 
 
@@ -153,46 +154,38 @@ def box_transform_inv(box, deltas):
 def generate_all_anchors(anchors, H, W):
     """
     Generate dense anchors given grid defined by (H,W)
-
     Arguments:
-    anchors -- tensor of shape (num_anchors, 2), pre-defined anchors (pw, ph) on each cell
-    H -- int, grid height
-    W -- int, grid width
+        - anchors : tensor of shape (num_anchors, 2), pre-defined anchors (pw, ph) on each cell
+        - H : int, grid height
+        - W : int, grid width
 
     Returns:
-    all_anchors -- tensor of shape (H * W * num_anchors, 4) dense grid anchors (c_x, c_y, w, h)
+        - all_anchors : tensor of shape (H * W * num_anchors, 4) dense grid anchors (c_x, c_y, w, h)
     """
+    A = anchors.size(0) ## number of anchors per cell(그리드 셀마다 할당 되는 앵커의 수.)
+    K = H * W ## # number of cells(그리드 셀의 수.)
 
-    # number of anchors per cell
-    A = anchors.size(0)
-
-    # number of cells
-    K = H * W
-
+    ## shift_x : row index들을 원소로 하는 13 * 13 행렬 [[0,0,...0], [1,1,...,1], [2,2,...,2]]
+    ## shift_y : col index들을 원소로 하는 13 * 13 행렬 [[0,1,...,12], [0,1,...,12], [0,1,...,12]]
     shift_x, shift_y = torch.meshgrid([torch.arange(0, W), torch.arange(0, H)], indexing='ij')
 
-    # transpose shift_x and shift_y because we want our anchors to be organized in H x W order
+    ## transpose shift_x and shift_y because we want our anchors to be organized in H x W order
     shift_x = shift_x.t().contiguous()
     shift_y = shift_y.t().contiguous()
 
-    # shift_x is a long tensor, c_x is a float tensor
+    ## shift_x is a long tensor, c_x is a float tensor
     c_x = shift_x.float()
     c_y = shift_y.float()
+    ## 여기까지는 모두 13 * 13 행렬.
 
+    ## cat(169, 1, 169, 1) --> 169, 2(cx, cy)
     centers = torch.cat([c_x.view(-1, 1), c_y.view(-1, 1)], dim=-1)  # tensor of shape (h * w, 2), (cx, cy)
 
-    # add anchors width and height to centers
-    all_anchors = torch.cat([centers.view(K, 1, 2).expand(K, A, 2),
-                             anchors.view(1, A, 2).expand(K, A, 2)], dim=-1)
+    ## add anchors width and height to centers. 그리드 셀의 중심좌표와 anchor의 width, height(pw, ph)를 합친다.
+    ## centers : [169, 2] --> [169, 1, 2] --> [169, 5, 2]
+    ## anchors : [5, 2] --> [1, 5, 2] --> [169, 5, 2]
+    all_anchors = torch.cat([centers.view(K, 1, 2).expand(K, A, 2), anchors.view(1, A, 2).expand(K, A, 2)], dim=-1) ## [169, 5, 4]
 
-    all_anchors = all_anchors.view(-1, 4)
+    all_anchors = all_anchors.view(-1, 4) ## [h*w*num_anchors, 4] --> [845, 4]
 
     return all_anchors
-
-
-
-
-
-
-
-

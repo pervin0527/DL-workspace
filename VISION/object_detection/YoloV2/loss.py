@@ -5,48 +5,18 @@ from utils.detection_utils import generate_all_anchors, xywh2xxyy, box_transform
 
 
 def build_target(output, gt_data, H, W, train_params):
-    """
-    Build the training target for output tensor
+    delta_pred_batch = output[0]    ## [batch_size, height * width * num_boxes, 4] pred of delta. σ(t_x), σ(t_y), σ(t_w), σ(t_h)
+    conf_pred_batch = output[1]     ## [batch_size, height * width * num_boxes, 1] pred if confidence score.
+    class_score_batch = output[2]   ## [batch_size, height * width * num_boxes, num_classes] pred of class scores.
 
-    Arguments:
-
-    output_data -- tuple (delta_pred_batch, conf_pred_batch, class_pred_batch), output data of the yolo network
-    gt_data -- tuple (gt_boxes_batch, gt_classes_batch, num_boxes_batch), ground truth data
-
-    delta_pred_batch -- tensor of shape (B, H * W * num_anchors, 4), predictions of delta σ(t_x), σ(t_y), σ(t_w), σ(t_h)
-    conf_pred_batch -- tensor of shape (B, H * W * num_anchors, 1), prediction of IoU score σ(t_c)
-    class_score_batch -- tensor of shape (B, H * W * num_anchors, num_classes), prediction of class scores (cls1, cls2, ..)
-
-    gt_boxes_batch -- tensor of shape (B, N, 4), ground truth boxes, normalized values
-                       (x1, y1, x2, y2) range 0~1
-    gt_classes_batch -- tensor of shape (B, N), ground truth classes (cls)
-    num_obj_batch -- tensor of shape (B, 1). number of objects
-
-
-    Returns:
-    iou_target -- tensor of shape (B, H * W * num_anchors, 1)
-    iou_mask -- tensor of shape (B, H * W * num_anchors, 1)
-    box_target -- tensor of shape (B, H * W * num_anchors, 4)
-    box_mask -- tensor of shape (B, H * W * num_anchors, 1)
-    class_target -- tensor of shape (B, H * W * num_anchors, 1)
-    class_mask -- tensor of shape (B, H * W * num_anchors, 1)
-
-    """
-    delta_pred_batch = output[0]
-    conf_pred_batch = output[1]
-    class_score_batch = output[2]
-
-    gt_boxes_batch = gt_data[0]
-    gt_classes_batch = gt_data[1]
-    num_boxes_batch = gt_data[2]
+    gt_boxes_batch = gt_data[0]     ## [batch_size, num_of_object, 4] ground truth boxes(normalized values 0 ~ 1)
+    gt_classes_batch = gt_data[1]   ## [batch_1ize, num_of_object] ground truth classes.
+    num_boxes_batch = gt_data[2]    ## [batch_size, 1] num of objects.
 
     bsize = delta_pred_batch.size(0)
-
     num_anchors = 5  # hard code for now
 
-    # initial the output tensor
-    # we use `tensor.new()` to make the created tensor has the same devices and data type as input tensor's
-    # what tensor is used doesn't matter
+    ## initial the output tensor(결과값을 저장할 빈 텐서.)
     iou_target = delta_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
     iou_mask = delta_pred_batch.new_ones((bsize, H * W, num_anchors, 1)) * train_params["noobject_scale"]
 
@@ -56,93 +26,89 @@ def build_target(output, gt_data, H, W, train_params):
     class_target = conf_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
     class_mask = conf_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
 
-    # get all the anchors
+    """
+    모든 anchor의 x, y, w, h는 grid의 width, height에 의해 정규화된 상태이다. 즉, 앵커 박스의 크기가 전체 이미지의 크기가 아닌 해당 그리드 셀의 크기에 따라 정의되었다.
+    모델의 예측은 0에서 1 사이의 값으로 정규화되어 있다. 따라서 모델이 예측하는 객체의 위치, 크기 등이 그리드 셀의 상대적인 크기와 위치를 기반으로 계산되어야 한다.
+    note: the all anchors' xywh scale is normalized by the grid width and height, i.e. 13 x 13.
+    this is very crucial because the predict output is normalized to 0~1, which is also normalized by the grid width and height.
+    """
+    anchors = torch.FloatTensor(train_params["anchors"]) ## [[1.3221, 1.73145], [3.19275, 4.00944], [5.05587, 8.09892], [9.47112, 4.84053], [11.2364, 10.0071]]
+    ## 모든 앵커를 그리드 셀 범위로 변환시키고 그에 대한 cx, cy, w, h를 만든다.
+    all_grid_xywh = generate_all_anchors(anchors, H, W) ## shape: (H * W * num_anchors, 4), format: (x, y, w, h)
 
-    anchors = torch.FloatTensor(train_params["anchors"])
+    ## 모든 그리드 셀에 대한 앵커 박스의 x, y 좌표와 너비, 높이를 담고 있다.
+    all_grid_xywh = delta_pred_batch.new(*all_grid_xywh.size()).copy_(all_grid_xywh) ## delta_pred_bathc와 같은 타입, 장치를 할당받는 텐서를 만드는 것.
+    all_anchors_xywh = all_grid_xywh.clone() ## 그리드 셀에 대한 앵커 박스들을 복제.
+    all_anchors_xywh[:, 0:2] += 0.5 ## 각 앵커 박스의 x, y 중심 좌표를 0.5씩 증가시킨다.
+    all_anchors_xxyy = xywh2xxyy(all_anchors_xywh) ## 좌표변환 x,y,w,h -> xmin, xmax, ymin, ymax. 각 그리드셀에 대한 이미지 범위의 앵커 박스.
 
-    # note: the all anchors' xywh scale is normalized by the grid width and height, i.e. 13 x 13
-    # this is very crucial because the predict output is normalized to 0~1, which is also
-    # normalized by the grid width and height
-    all_grid_xywh = generate_all_anchors(anchors, H, W) # shape: (H * W * num_anchors, 4), format: (x, y, w, h)
-    all_grid_xywh = delta_pred_batch.new(*all_grid_xywh.size()).copy_(all_grid_xywh)
-    all_anchors_xywh = all_grid_xywh.clone()
-    all_anchors_xywh[:, 0:2] += 0.5
-    all_anchors_xxyy = xywh2xxyy(all_anchors_xywh)
-
-    # process over batches
+    ## process over batches
     for b in range(bsize):
-        num_obj = num_boxes_batch[b].item()
-        delta_pred = delta_pred_batch[b]
-        gt_boxes = gt_boxes_batch[b][:num_obj, :]
-        gt_classes = gt_classes_batch[b][:num_obj]
+        num_obj = num_boxes_batch[b].item() ## batch의 i번째 데이터가 가진 object의 수.
+        delta_pred = delta_pred_batch[b]    ## i번째 데이터의 x, y, w, h
+        gt_boxes = gt_boxes_batch[b][:num_obj, :] ## i번째 데이터의 ground truth box.
+        gt_classes = gt_classes_batch[b][:num_obj] ## i번째 데이터의 classes.
 
-        # rescale ground truth boxes
+        ## rescale ground truth boxes.
         gt_boxes[:, 0::2] *= W
         gt_boxes[:, 1::2] *= H
 
-
-        # step 1: process IoU target
-
+        ## STEP 1: process IoU target.
         # apply delta_pred to pre-defined anchors
-        all_anchors_xywh = all_anchors_xywh.view(-1, 4)
-        box_pred = box_transform_inv(all_grid_xywh, delta_pred)
-        box_pred = xywh2xxyy(box_pred)
+        all_anchors_xywh = all_anchors_xywh.view(-1, 4) ## (H * W * num_anchors, 4)
+        box_pred = box_transform_inv(all_grid_xywh, delta_pred) ## 그리드 셀에 대한 앵커 박스를 모델의 예측만큼 이동, 변환 시킨다.
+        box_pred = xywh2xxyy(box_pred) ## 좌표 변환. 각 그리드셀에 대한 이미지 범위의 예측 박스.
 
-        # for each anchor, its iou target is corresponded to the max iou with any gt boxes
-        ious = box_ious(box_pred, gt_boxes) # shape: (H * W * num_anchors, num_obj)
+        ## gt box와 IoU가 가장 높은 pred +  anchor box를 찾는다.
+        ious = box_ious(box_pred, gt_boxes)
         ious = ious.view(-1, num_anchors, num_obj)
         max_iou, _ = torch.max(ious, dim=-1, keepdim=True) # shape: (H * W, num_anchors, 1)
 
-        # iou_target[b] = max_iou
-        # we ignore the gradient of predicted boxes whose IoU with any gt box is greater than cfg.threshold
+        """ Hard-Negative Mining. """
+        ## iou_target[b] = max_iou
+        ## we ignore the gradient of predicted boxes whose IoU with any gt box is greater than cfg.threshold
         iou_thresh_filter = max_iou.view(-1) > train_params["thres"]
-        n_pos = torch.nonzero(iou_thresh_filter).numel()
+        n_pos = torch.nonzero(iou_thresh_filter).numel() ## IoU가 임계값보다 높은 예측 박스의 그라디언트(gradient)는 학습 과정에서 무시.
 
         if n_pos > 0:
             iou_mask[b][max_iou >= train_params["thres"]] = 0
+        """ 이 과정을 통해 전체 영역내에서 배경과 객체에 대한 구분이 가능해진다. """
 
-        # step 2: process box target and class target
-        # calculate overlaps between anchors and gt boxes
-        overlaps = box_ious(all_anchors_xxyy, gt_boxes).view(-1, num_anchors, num_obj)
+        ## STEP 2: process box target and class target.
+        ## calculate overlaps between anchors and gt boxes
+        """ gt_box와 가장 적합한 앵커 박스를 선택하고 이들 간 offset을 구하여 target, mask에 기록한다."""
+        overlaps = box_ious(all_anchors_xxyy, gt_boxes).view(-1, num_anchors, num_obj) ## 모든 xxyy 앵커 박스와 gt 박스간 IOU를 계산한다.
         gt_boxes_xywh = xxyy2xywh(gt_boxes)
 
         # iterate over all objects
-
         for t in range(gt_boxes.size(0)):
-            # compute the center of each gt box to determine which cell it falls on
-            # assign it to a specific anchor by choosing max IoU
-
-            gt_box_xywh = gt_boxes_xywh[t]
-            gt_class = gt_classes[t]
-            cell_idx_x, cell_idx_y = torch.floor(gt_box_xywh[:2])
-            cell_idx = cell_idx_y * W + cell_idx_x
+            # compute the center of each gt box to determine which cell it falls on assign it to a specific anchor by choosing max IoU.
+            gt_box_xywh = gt_boxes_xywh[t] ## t번째 gt box의 좌표
+            gt_class = gt_classes[t] ## t번째 gt class
+            cell_idx_x, cell_idx_y = torch.floor(gt_box_xywh[:2]) ## t번째 gt box의 중심에 floor를 적용해 grid cell의 i, j를 구한다.
+            cell_idx = cell_idx_y * W + cell_idx_x ## 2차원 그리드 셀 인덱스를 1차원 인덱스로 변환.
             cell_idx = cell_idx.long()
 
-            # update box_target, box_mask
-            overlaps_in_cell = overlaps[cell_idx, :, t]
-            argmax_anchor_idx = torch.argmax(overlaps_in_cell)
+            ## update box_target, box_mask
+            overlaps_in_cell = overlaps[cell_idx, :, t] ##  현재 그리드 셀에 대한 모든 앵커 박스와 t번째 정답 박스 간의 IOU를 가져온다.
+            argmax_anchor_idx = torch.argmax(overlaps_in_cell) ## 가장 높은 IOU를 보인 앵커 박스의 인덱스를 선택.
 
-            assigned_grid = all_grid_xywh.view(-1, num_anchors, 4)[cell_idx, argmax_anchor_idx, :].unsqueeze(0)
+            assigned_grid = all_grid_xywh.view(-1, num_anchors, 4)[cell_idx, argmax_anchor_idx, :].unsqueeze(0) ## 선택된 앵커 박스의 정보를 가져온다.
             gt_box = gt_box_xywh.unsqueeze(0)
-            target_t = box_transform(assigned_grid, gt_box)
+            target_t = box_transform(assigned_grid, gt_box) ## 선택된 앵커 박스와 gt 박스간의 offset을 계산한다. σ(t_x), σ(t_y), exp(t_w), exp(t_h)
 
-            box_target[b, cell_idx, argmax_anchor_idx, :] = target_t.unsqueeze(0)
+            box_target[b, cell_idx, argmax_anchor_idx, :] = target_t.unsqueeze(0) ## 계산된 변환을 박스 타겟 텐서에 저장
             box_mask[b, cell_idx, argmax_anchor_idx, :] = 1
 
             # update cls_target, cls_mask
-            class_target[b, cell_idx, argmax_anchor_idx, :] = gt_class
+            class_target[b, cell_idx, argmax_anchor_idx, :] = gt_class ## 클래스 타겟 텐서를 업데이트.
             class_mask[b, cell_idx, argmax_anchor_idx, :] = 1
 
             # update iou target and iou mask
-            iou_target[b, cell_idx, argmax_anchor_idx, :] = max_iou[cell_idx, argmax_anchor_idx, :]
+            iou_target[b, cell_idx, argmax_anchor_idx, :] = max_iou[cell_idx, argmax_anchor_idx, :] ##  IOU 타겟 텐서를 업데이트
             iou_mask[b, cell_idx, argmax_anchor_idx, :] = train_params["object_scale"]
 
-    return iou_target.view(bsize, -1, 1), \
-           iou_mask.view(bsize, -1, 1), \
-           box_target.view(bsize, -1, 4),\
-           box_mask.view(bsize, -1, 1), \
-           class_target.view(bsize, -1, 1).long(), \
-           class_mask.view(bsize, -1, 1)
+    return iou_target.view(bsize, -1, 1), iou_mask.view(bsize, -1, 1), box_target.view(bsize, -1, 4), box_mask.view(bsize, -1, 1), class_target.view(bsize, -1, 1).long(), class_mask.view(bsize, -1, 1)
 
 
 def yolo_loss(output, target, train_params):

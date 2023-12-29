@@ -32,17 +32,15 @@ def build_target(output, gt_data, H, W, train_params):
     note: the all anchors' xywh scale is normalized by the grid width and height, i.e. 13 x 13.
     this is very crucial because the predict output is normalized to 0~1, which is also normalized by the grid width and height.
     """
-    anchors = torch.FloatTensor(train_params["anchors"]) ## [[1.3221, 1.73145], [3.19275, 4.00944], [5.05587, 8.09892], [9.47112, 4.84053], [11.2364, 10.0071]]
     ## 모든 앵커를 그리드 셀 범위로 변환시키고 그에 대한 cx, cy, w, h를 만든다.
+    anchors = torch.FloatTensor(train_params["anchors"]) ## [[1.3221, 1.73145], [3.19275, 4.00944], [5.05587, 8.09892], [9.47112, 4.84053], [11.2364, 10.0071]]
     all_grid_xywh = generate_all_anchors(anchors, H, W) ## shape: (H * W * num_anchors, 4), format: (x, y, w, h)
-
-    ## 모든 그리드 셀에 대한 앵커 박스의 x, y 좌표와 너비, 높이를 담고 있다.
-    all_grid_xywh = delta_pred_batch.new(*all_grid_xywh.size()).copy_(all_grid_xywh) ## delta_pred_bathc와 같은 타입, 장치를 할당받는 텐서를 만드는 것.
+    all_grid_xywh = delta_pred_batch.new(*all_grid_xywh.size()).copy_(all_grid_xywh) ## delta_pred_batch와 같은 타입, 장치를 할당받는 텐서를 만드는 것.
     all_anchors_xywh = all_grid_xywh.clone() ## 그리드 셀에 대한 앵커 박스들을 복제.
     all_anchors_xywh[:, 0:2] += 0.5 ## 각 앵커 박스의 x, y 중심 좌표를 0.5씩 증가시킨다.
     all_anchors_xxyy = xywh2xxyy(all_anchors_xywh) ## 좌표변환 x,y,w,h -> xmin, xmax, ymin, ymax. 각 그리드셀에 대한 이미지 범위의 앵커 박스.
 
-    ## process over batches
+    ## batch를 구성하는 batch_size개의 원소에 접근.
     for b in range(bsize):
         num_obj = num_boxes_batch[b].item() ## batch의 i번째 데이터가 가진 object의 수.
         delta_pred = delta_pred_batch[b]    ## i번째 데이터의 x, y, w, h
@@ -50,25 +48,26 @@ def build_target(output, gt_data, H, W, train_params):
         gt_classes = gt_classes_batch[b][:num_obj] ## i번째 데이터의 classes.
 
         ## rescale ground truth boxes.
-        gt_boxes[:, 0::2] *= W
+        gt_boxes[:, 0::2] *= W ## 0번 idx부터 시작해서 2단계씩 이동. 각 박스의 x, w에 W를 곱한다.
         gt_boxes[:, 1::2] *= H
 
         ## STEP 1: process IoU target.
         # apply delta_pred to pre-defined anchors
         all_anchors_xywh = all_anchors_xywh.view(-1, 4) ## (H * W * num_anchors, 4)
-        box_pred = box_transform_inv(all_grid_xywh, delta_pred) ## 그리드 셀에 대한 앵커 박스를 모델의 예측만큼 이동, 변환 시킨다.
-        box_pred = xywh2xxyy(box_pred) ## 좌표 변환. 각 그리드셀에 대한 이미지 범위의 예측 박스.
+        
+        ## ## 그리드 셀에 대한 앵커 박스를 모델의 예측만큼 이동, 크기 조절.
+        box_pred = box_transform_inv(all_grid_xywh, delta_pred) ## [batch_size, h*w*num_anchors, 4]
+        ## 좌표 변환. 각 그리드셀에 대한 이미지 범위의 예측 박스.
+        box_pred = xywh2xxyy(box_pred) ## [batch_size, h*w*num_anchors, 4]
 
         ## gt box와 IoU가 가장 높은 pred +  anchor box를 찾는다.
-        ious = box_ious(box_pred, gt_boxes)
-        ious = ious.view(-1, num_anchors, num_obj)
-        max_iou, _ = torch.max(ious, dim=-1, keepdim=True) # shape: (H * W, num_anchors, 1)
+        ious = box_ious(box_pred, gt_boxes) ## [845, num_obj]
+        ious = ious.view(-1, num_anchors, num_obj) ## [h*w, 5, 1]
+        max_iou, _ = torch.max(ious, dim=-1, keepdim=True) # (H * W, num_anchors, 1)
 
         """ Hard-Negative Mining. """
-        ## iou_target[b] = max_iou
-        ## we ignore the gradient of predicted boxes whose IoU with any gt box is greater than cfg.threshold
-        iou_thresh_filter = max_iou.view(-1) > train_params["thres"]
-        n_pos = torch.nonzero(iou_thresh_filter).numel() ## IoU가 임계값보다 높은 예측 박스의 그라디언트(gradient)는 학습 과정에서 무시.
+        iou_thresh_filter = max_iou.view(-1) > train_params["thres"] ## thres 이상의 iou는 True 낮은 iou는 False인 Boolean 텐서.
+        n_pos = torch.nonzero(iou_thresh_filter).numel() ## 0이 아닌(True) 원소들을 남겨두고 numel은 이들의 수를 카운트한다.
 
         if n_pos > 0:
             iou_mask[b][max_iou >= train_params["thres"]] = 0
@@ -86,7 +85,7 @@ def build_target(output, gt_data, H, W, train_params):
             gt_box_xywh = gt_boxes_xywh[t] ## t번째 gt box의 좌표
             gt_class = gt_classes[t] ## t번째 gt class
             cell_idx_x, cell_idx_y = torch.floor(gt_box_xywh[:2]) ## t번째 gt box의 중심에 floor를 적용해 grid cell의 i, j를 구한다.
-            cell_idx = cell_idx_y * W + cell_idx_x ## 2차원 그리드 셀 인덱스를 1차원 인덱스로 변환.
+            cell_idx = cell_idx_y * W + cell_idx_x ## 2차원 그리드 셀 인덱스를 1차원 인덱스로 변환. 169 중 i번째.
             cell_idx = cell_idx.long()
 
             ## update box_target, box_mask

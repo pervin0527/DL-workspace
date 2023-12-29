@@ -128,6 +128,7 @@ def box_transform(box1, box2):
 def box_transform_inv(box, deltas):
     """
     apply deltas to box to generate predicted boxes
+    모델이 예측한 offset (σ(t_x), σ(t_y), exp(t_w), exp(t_h))을 이용해 grid 범위의 anchor box를 이동 및 크기 조절.
 
     Arguments:
     box -- tensor of shape (N, 4), boxes, (c_x, c_y, w, h)
@@ -148,6 +149,7 @@ def box_transform_inv(box, deltas):
     h = h.view(-1, 1)
 
     pred_box = torch.cat([c_x, c_y, w, h], dim=-1)
+
     return pred_box
 
 

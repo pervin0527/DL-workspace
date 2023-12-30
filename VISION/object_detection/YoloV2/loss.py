@@ -14,7 +14,7 @@ def build_target(output, gt_data, H, W, train_params):
     num_boxes_batch = gt_data[2]    ## [batch_size, 1] num of objects.
 
     bsize = delta_pred_batch.size(0)
-    num_anchors = 5  # hard code for now
+    num_anchors = 5
 
     ## initial the output tensor(결과값을 저장할 빈 텐서.)
     iou_target = delta_pred_batch.new_zeros((bsize, H * W, num_anchors, 1))
@@ -51,8 +51,12 @@ def build_target(output, gt_data, H, W, train_params):
         gt_boxes[:, 0::2] *= W ## 0번 idx부터 시작해서 2단계씩 이동. 각 박스의 x, w에 W를 곱한다.
         gt_boxes[:, 1::2] *= H
 
-        ## STEP 1: process IoU target.
-        # apply delta_pred to pre-defined anchors
+        """
+        STEP 1: process IoU target. apply delta_pred to pre-defined anchors.
+        학습 과정에서 객체가 없는 영역을 식별하기 위한 마스크에 IoU가 높은 박스(실제 객체가 존재할 가능성이 높은 영역)의 경우 iou_mask의 해당 원소를 0으로 설정한다.
+        이는 해당 영역을 '객체가 존재하는 영역'으로 표시하며, 학습 중 이 영역에 대한 손실(loss) 계산을 더 강조하게 된다. 즉, 모델이 객체가 있는 영역을 더 잘 인식하도록 유도한다.
+        이 과정을 통해 전체 영역내에서 배경과 객체에 대한 구분이 가능해진다.
+        """
         all_anchors_xywh = all_anchors_xywh.view(-1, 4) ## (H * W * num_anchors, 4)
         
         ## ## 그리드 셀에 대한 앵커 박스를 모델의 예측만큼 이동, 크기 조절.
@@ -65,31 +69,32 @@ def build_target(output, gt_data, H, W, train_params):
         ious = ious.view(-1, num_anchors, num_obj) ## [h*w, 5, 1]
         max_iou, _ = torch.max(ious, dim=-1, keepdim=True) # (H * W, num_anchors, 1)
 
-        """ Hard-Negative Mining. """
         iou_thresh_filter = max_iou.view(-1) > train_params["thres"] ## thres 이상의 iou는 True 낮은 iou는 False인 Boolean 텐서.
         n_pos = torch.nonzero(iou_thresh_filter).numel() ## 0이 아닌(True) 원소들을 남겨두고 numel은 이들의 수를 카운트한다.
 
         if n_pos > 0:
             iou_mask[b][max_iou >= train_params["thres"]] = 0
-        """ 이 과정을 통해 전체 영역내에서 배경과 객체에 대한 구분이 가능해진다. """
 
-        ## STEP 2: process box target and class target.
-        ## calculate overlaps between anchors and gt boxes
-        """ gt_box와 가장 적합한 앵커 박스를 선택하고 이들 간 offset을 구하여 target, mask에 기록한다."""
+        """
+        STEP 2: process box target and class target. calculate overlaps between anchors and gt boxes.
+        그리드 셀마다 설정된 기본 앵커 박스에서 좌표만 x,y,w,h를 xmin, ymin, xmax, ymax로 변환한 앵커를 gt와 iou 계산을 하고 점수가 가장 높은 앵커 박스를 선정한다.
+        max_iou 앵커 박스와 gt 박스 간 offset을 target으로 사용한다,
+        """
         overlaps = box_ious(all_anchors_xxyy, gt_boxes).view(-1, num_anchors, num_obj) ## 모든 xxyy 앵커 박스와 gt 박스간 IOU를 계산한다.
         gt_boxes_xywh = xxyy2xywh(gt_boxes)
 
         # iterate over all objects
         for t in range(gt_boxes.size(0)):
             # compute the center of each gt box to determine which cell it falls on assign it to a specific anchor by choosing max IoU.
-            gt_box_xywh = gt_boxes_xywh[t] ## t번째 gt box의 좌표
-            gt_class = gt_classes[t] ## t번째 gt class
+            gt_box_xywh = gt_boxes_xywh[t] ## t번째 데이터가 가진 num_obj개의 gt box 좌표.
+            gt_class = gt_classes[t] ## t번째 데이터가 가진 gt class.
+
             cell_idx_x, cell_idx_y = torch.floor(gt_box_xywh[:2]) ## t번째 gt box의 중심에 floor를 적용해 grid cell의 i, j를 구한다.
             cell_idx = cell_idx_y * W + cell_idx_x ## 2차원 그리드 셀 인덱스를 1차원 인덱스로 변환. 169 중 i번째.
             cell_idx = cell_idx.long()
 
             ## update box_target, box_mask
-            overlaps_in_cell = overlaps[cell_idx, :, t] ##  현재 그리드 셀에 대한 모든 앵커 박스와 t번째 정답 박스 간의 IOU를 가져온다.
+            overlaps_in_cell = overlaps[cell_idx, :, t] ## 현재 그리드 셀에 대한 모든 앵커 박스와 t번째 정답 박스 간의 IOU를 가져온다.
             argmax_anchor_idx = torch.argmax(overlaps_in_cell) ## 가장 높은 IOU를 보인 앵커 박스의 인덱스를 선택.
 
             assigned_grid = all_grid_xywh.view(-1, num_anchors, 4)[cell_idx, argmax_anchor_idx, :].unsqueeze(0) ## 선택된 앵커 박스의 정보를 가져온다.
@@ -112,22 +117,19 @@ def build_target(output, gt_data, H, W, train_params):
 
 def yolo_loss(output, target, train_params):
     """
-    Build yolo loss
-
     Arguments:
-    output -- tuple (delta_pred, conf_pred, class_score), output data of the yolo network
-    target -- tuple (iou_target, iou_mask, box_target, box_mask, class_target, class_mask) target label data
+    output : tuple (delta_pred, conf_pred, class_score), output data of the yolo network.
+        - delta_pred : (B, H * W * num_anchors, 4), predictions of delta σ(t_x), σ(t_y), σ(t_w), σ(t_h)
+        - conf_pred : (B, H * W * num_anchors, 1), prediction of IoU score σ(t_c)
+        - class_score : (B, H * W * num_anchors, num_classes), prediction of class scores (cls1, cls2 ..)
 
-    delta_pred -- Variable of shape (B, H * W * num_anchors, 4), predictions of delta σ(t_x), σ(t_y), σ(t_w), σ(t_h)
-    conf_pred -- Variable of shape (B, H * W * num_anchors, 1), prediction of IoU score σ(t_c)
-    class_score -- Variable of shape (B, H * W * num_anchors, num_classes), prediction of class scores (cls1, cls2 ..)
-
-    iou_target -- Variable of shape (B, H * W * num_anchors, 1)
-    iou_mask -- Variable of shape (B, H * W * num_anchors, 1)
-    box_target -- Variable of shape (B, H * W * num_anchors, 4)
-    box_mask -- Variable of shape (B, H * W * num_anchors, 1)
-    class_target -- Variable of shape (B, H * W * num_anchors, 1)
-    class_mask -- Variable of shape (B, H * W * num_anchors, 1)
+    target : tuple (iou_target, iou_mask, box_target, box_mask, class_target, class_mask) target label data.
+        - iou_target : (B, H * W * num_anchors, 1)
+        - iou_mask : (B, H * W * num_anchors, 1)
+        - box_target : (B, H * W * num_anchors, 4)
+        - box_mask : (B, H * W * num_anchors, 1)
+        - class_target : (B, H * W * num_anchors, 1)
+        - class_mask : (B, H * W * num_anchors, 1)
 
     Return:
     loss -- yolo overall multi-task loss
@@ -146,19 +148,16 @@ def yolo_loss(output, target, train_params):
 
     b, _, num_classes = class_score_batch.size()
     class_score_batch = class_score_batch.view(-1, num_classes)
+
     class_target = class_target.view(-1)
     class_mask = class_mask.view(-1)
 
-    # ignore the gradient of noobject's target
+    ## ignore the gradient of noobject's target
     class_keep = class_mask.nonzero().squeeze(1)
     class_score_batch_keep = class_score_batch[class_keep, :]
     class_target_keep = class_target[class_keep]
 
-    # if cfg.debug:
-    #     print(class_score_batch_keep)
-    #     print(class_target_keep)
-
-    # calculate the loss, normalized by batch size.
+    ## calculate the loss, normalized by batch size.
     box_loss = 1 / b * train_params["coord_scale"] * F.mse_loss(delta_pred_batch * box_mask, box_target * box_mask, reduction='sum') / 2.0
     iou_loss = 1 / b * F.mse_loss(conf_pred_batch * iou_mask, iou_target * iou_mask, reduction='sum') / 2.0
     class_loss = 1 / b * train_params["class_scale"] * F.cross_entropy(class_score_batch_keep, class_target_keep, reduction='sum')

@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from models.util import build_targets
 
 def conv_bn_relu_layer(in_channels, out_channels, kernel_size, stride=1, padding=1, requires_grad=True):
     conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
@@ -53,15 +54,19 @@ class DetectionLayer(nn.Module):
         num_batches = x.size(0)
         grid_size = x.size(2)
 
+        ## x : [batch_size, grid_size, grid_size, num_anchors * (5 + num_classes)]
+        ## x.view : [batch_size, num_anchors, 5 + num_classes, grid_size, grid_size]
+        ## permute : [batch_size, num_anchors, grid_size, grid_size, 5 + num_classes]
         prediction = (x.view(num_batches, self.num_anchors, self.num_classes + 5, grid_size, grid_size).permute(0, 1, 3, 4, 2).contiguous())
 
         ## 출력값 정리
+        ## prediction : [batch_size, num_anchors, grid_size, grid_size, 5 + num_classes]
         cx = torch.sigmoid(prediction[..., 0]) ## tx
         cy = torch.sigmoid(prediction[..., 1]) ## ty
         w = prediction[..., 2] ## tw
         h = prediction[..., 3] ## th
-        pred_conf = torch.sigmoid(prediction[..., 4]) ## confidence score(objectness)
-        pred_cls = torch.sigmoid(prediction[..., 5:]) ## class score
+        pred_conf = torch.sigmoid(prediction[..., 4]) ## confidence score(objectness) [num_batches, num_anchors, grid_size, grid_size, 1]
+        pred_cls = torch.sigmoid(prediction[..., 5:]) ## class score [num_batches, num_anchors, grid_size, grid_size, self.num_classes]
 
         ## grid 정의.
         stride = self.img_size / grid_size ## 전체 downscale factor
@@ -75,9 +80,25 @@ class DetectionLayer(nn.Module):
         anchor_w = scaled_anchors[:, 0:1].view((1, self.num_anchors, 1, 1))
         anchor_h = scaled_anchors[:, 1:2].view((1, self.num_anchors, 1, 1))
 
-        ## 모델이 예측한 offset들을 조정된 앵커 박스에 반영한다. -> bx, by, bw, bh
-        pred_boxes = torch.zeros_like(prediction[..., :4], device=device)
+        ## 모델이 예측한 offset들을 조정된 앵커 박스에 반영한다. tx, ty, tw, th --> bx, by, bw, bh
+        pred_boxes = torch.zeros_like(prediction[..., :4], device=device) ## [batch_size, num_anchors, grid_size, grid_size, 4]
         pred_boxes[..., 0] = cx + grid_x
         pred_boxes[..., 1] = cy + grid_y
         pred_boxes[..., 2] = torch.exp(w) * anchor_w
         pred_boxes[..., 3] = torch.exp(h) * anchor_h
+
+        ## pred_boxes : [num_batches, num_anchors, grid_size, grid_size, 4]
+        ## pred_conf : [num_batches, num_anchors, grid_size, grid_size, 1]
+        ## pred_cls : [num_batches, num_anchors, grid_size, grid_size, self.num_classes]
+        pred = (pred_boxes.view(num_batches, -1, 4) * stride, pred_conf.view(num_batches, -1, 1), pred_cls.view(num_batches, -1, self.num_classes))
+        output = torch.cat(pred, -1)
+
+        if targets is None:
+            return output, 0
+        
+        iou_scores, class_mask, obj_mask, no_obj_mask, tx, ty, tw, th, tcls, tconf = build_targets(pred_boxes=pred_boxes,
+                                                                                                   pred_cls=pred_cls,
+                                                                                                   target=targets,
+                                                                                                   anchors=scaled_anchors,
+                                                                                                   ignore_thres=self.ignore_threshold,
+                                                                                                   device=device)

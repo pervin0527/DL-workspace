@@ -6,17 +6,17 @@ import numpy as np
 
 from torch.utils.data import Dataset
 
-from data.util import pad_to_square
+from data.augmentation import get_transform
+from data.util import resize_image_and_boxes
 
 
 class YoloDataset(Dataset):
-    def __init__(self, file_list_path, img_size, augment, multiscale, normalized_labels):
-        self.img_size = img_size
-        self.augment = augment
-        self.max_objects = 100
-        self.multiscale = multiscale
-        self.normalized_labels = normalized_labels
+    def __init__(self, file_list_path, img_size, augment, multiscale=True):
         self.batch_count = 0
+        self.max_objects = 100
+        self.img_size = img_size
+        self.augment = get_transform() if augment else None
+        self.multiscale = multiscale
 
         with open(file_list_path, 'r') as f:
             self.image_files = f.readlines()
@@ -33,63 +33,74 @@ class YoloDataset(Dataset):
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        h, w, c = image.shape
-        h_factor, w_factor = (h, w) if self.normalized_labels else (1, 1)
+        annot_path = self.label_files[idx].rstrip()
+        if os.path.exists(annot_path):
+            annot = np.loadtxt(annot_path).reshape(-1, 5)
+            if annot.size > 0:
+                class_ids = annot[:, 0].reshape(-1, 1).astype(np.int64)
+                boxes = annot[:, 1:]
 
-        image, pad = pad_to_square(image)
-        _, padded_h, padded_w = image.shape
+                if self.augment is not None:
+                    transformed = self.augment(image=image, bboxes=boxes, labels=class_ids)
+                    image = transformed["image"]
+                    boxes = np.array(transformed["bboxes"])
+                    class_ids = np.array(transformed["labels"])
 
-        targets = None
-        label_path = self.label_files[idx].rstrip()
-        if os.path.exists(label_path):
-            boxes = np.loadtxt(label_path).reshape(-1, 5)
+                    # 데이터 차원 확인 및 수정
+                    if class_ids.ndim == 1:
+                        class_ids = class_ids.reshape(-1, 1)
+                    if boxes.ndim == 1:
+                        boxes = boxes.reshape(-1, 1)
 
-            # Extract coordinates for unpadded + unscaled image
-            x1 = w_factor * (boxes[:, 1] - boxes[:, 3] / 2)
-            y1 = h_factor * (boxes[:, 2] - boxes[:, 4] / 2)
-            x2 = w_factor * (boxes[:, 1] + boxes[:, 3] / 2)
-            y2 = h_factor * (boxes[:, 2] + boxes[:, 4] / 2)
+                # 빈 배열 처리
+                if len(class_ids) == 0 or len(boxes) == 0:
+                    boxes = np.zeros((0, 5))
+                else:
+                    boxes = np.concatenate((class_ids, boxes), axis=1)
 
-            # Adjust for added padding
-            x1 += pad[0]
-            y1 += pad[2]
-            x2 += pad[1]
-            y2 += pad[3]
+            else:
+                # 객체가 없는 경우 빈 boxes 배열 처리
+                boxes = np.zeros((0, 5))
 
-            # Returns (x, y, w, h)
-            boxes[:, 1] = ((x1 + x2) / 2) / padded_w
-            boxes[:, 2] = ((y1 + y2) / 2) / padded_h
-            boxes[:, 3] *= w_factor / padded_w
-            boxes[:, 4] *= h_factor / padded_h
-
-            targets = np.zeros((len(boxes), 6))
-            targets[:, 1:] = boxes
-
-
-        return img_path, image, targets
+            targets = torch.zeros((len(boxes), 6))
+            targets[:, 1:] = torch.from_numpy(boxes)
         
+        return img_path, torch.tensor(image, dtype=torch.float32,), targets
+    
 
     def collate_fn(self, batch):
         paths, images, targets = list(zip(*batch))
 
-        ## Remove empty placeholder targets
-        targets = [boxes for boxes in targets if boxes is not None]
-
-        # Add sample index to targets
-        for i, boxes in enumerate(targets):
-            boxes[:, 0] = i
-
-        try:
-            targets = torch.cat(targets, 0)
-        except RuntimeError:
-            targets = None  # No boxes for an image
-
-        # Selects new image size every 10 batches
+        # 멀티스케일 조정
         if self.multiscale and self.batch_count % 10 == 0:
-            self.image_size = random.choice(range(320, 608 + 1, 32))
+            self.img_size = random.choice(range(320, 608 + 1, 32))
 
-        # Resize images to input shape
-        # images = torch.stack([resize(image, self.image_size) for image in images])
+        # 이미지와 타겟의 크기 조정
+        resized_images = []
+        resized_targets = []
+        for i, (image, target) in enumerate(zip(images, targets)):
+            if target is not None:
+                # 이미지와 바운딩 박스 크기 조정
+                image, boxes = resize_image_and_boxes(image.numpy(), target[:, 2:], new_size=self.img_size)
+                image = np.transpose(image, axes=(2, 0, 1))
+                resized_images.append(torch.from_numpy(image))
+
+                # 타겟에 배치 인덱스 추가
+                target[:, 0] = i  # 첫 번째 열에 배치 인덱스 할당
+                target[:, 2:] = torch.from_numpy(boxes)  # 바운딩 박스 좌표 업데이트
+                resized_targets.append(target)
+            else:
+                # 이미지만 크기 조정 (타겟이 없는 경우)
+                image = resize_image_and_boxes(image, None, new_size=self.img_size)[0]
+                image = np.transpose(image, axes=(2, 0, 1))
+                resized_images.append(torch.from_numpy(image))
+
+        # 타겟 텐서 생성
+        if len(resized_targets) > 0:
+            targets = torch.cat(resized_targets, 0)
+        else:
+            targets = None
+
         self.batch_count += 1
-
-        return paths, images, targets
+        
+        return paths, torch.stack(resized_images), targets

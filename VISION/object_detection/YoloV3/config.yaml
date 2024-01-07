@@ -1,3 +1,4 @@
+## Dataset config
 train: "/home/pervinco/DL-workspace/VISION/object_detection/YoloV3/data/train.txt"
 valid: "/home/pervinco/DL-workspace/VISION/object_detection/YoloV3/data/2007_test.txt"
 names:
@@ -23,3 +24,13 @@ names:
     "train",
     "tvmonitor",
   ]
+
+## Hyp-Params config
+epochs: 100
+batch_size: 16
+img_size: 416
+learning_rate: 0.001
+
+anchors: [[[10, 13], [16, 30], [33, 23]],
+          [[30, 61], [62, 45], [59, 119]],
+          [[116, 90], [156, 198], [373, 326]]]

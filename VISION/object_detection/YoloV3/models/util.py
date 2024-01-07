@@ -40,22 +40,33 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
     iou = inter_area / (b1_area + b2_area - inter_area + 1e-16)
 
+    return iou
+
 
 def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     """
     pred_boxes : [num_batches, num_anchors, grid_size, grid_size, 4]
     pred_cls : [num_batches, num_anchors, grid_size, grid_size, self.num_classes]
+    target : [objects_in_images,  class_ids, x, y, w, h]
+
+    example
+    tensor([[ 0.0000,  6.0000,  0.5403,  0.7812,  0.5194,  0.4375],
+            [ 0.0000,  6.0000,  0.6097,  0.1635,  0.4194,  0.3229],
+            [ 0.0000,  6.0000,  0.4375,  0.5135,  0.6028,  0.6604],
+            [ 1.0000, 14.0000,  0.7044,  0.2716,  0.5297,  0.5432],
+            [ 1.0000, 12.0000,  0.3617,  0.5375,  0.7234,  0.9250]])
     """
-    nB = pred_boxes.size(0)
-    nA = pred_boxes.size(1)
-    nC = pred_cls.size(-1)
-    nG = pred_boxes.size(2)
+    nB = pred_boxes.size(0) ## batch_size
+    nA = pred_boxes.size(1) ## num_anchors
+    nG = pred_boxes.size(2) ## grid_size
+    nC = pred_cls.size(-1)  ## num_classes
 
     # Output tensors
-    obj_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.bool, device=device)
-    noobj_mask = torch.ones(nB, nA, nG, nG, dtype=torch.bool, device=device)
-    class_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
-    iou_scores = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
+    obj_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.bool, device=device)     ## [batch_size, num_anchors, grid_size, grid_size]
+    noobj_mask = torch.ones(nB, nA, nG, nG, dtype=torch.bool, device=device)    ## [batch_size, num_anchors, grid_size, grid_size]
+    class_mask = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)  ## [batch_size, num_anchors, grid_size, grid_size]
+    iou_scores = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)  ## [batch_size, num_anchors, grid_size, grid_size]
+
     tx = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     ty = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
     tw = torch.zeros(nB, nA, nG, nG, dtype=torch.float, device=device)
@@ -63,13 +74,13 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     tcls = torch.zeros(nB, nA, nG, nG, nC, dtype=torch.float, device=device)
 
     # Convert to position relative to box
-    target_boxes = target[:, 2:6] * nG
-    gxy = target_boxes[:, :2]
-    gwh = target_boxes[:, 2:]
+    target_boxes = target[:, 2:6] * nG ## bx, by, bw, bh를 grid scale에 맞게 변환.
+    gxy = target_boxes[:, :2] ## grid scale의 bx, by
+    gwh = target_boxes[:, 2:] ## bw, bh
 
     # Get anchors with best iou
-    ious = torch.stack([bbox_wh_iou(anchor, gwh) for anchor in anchors])
-    _, best_ious_idx = ious.max(0)
+    ious = torch.stack([bbox_wh_iou(anchor, gwh) for anchor in anchors]) ## anchor와 bw, bh간 iou를 계산.
+    _, best_ious_idx = ious.max(0) ## 가장 높은 iou를 계산.
 
     # Separate target values
     b, target_labels = target[:, :2].long().t()
@@ -78,12 +89,12 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     gi, gj = gxy.long().t()
 
     # Set masks
-    obj_mask[b, best_ious_idx, gj, gi] = 1
-    noobj_mask[b, best_ious_idx, gj, gi] = 0
+    obj_mask[b, best_ious_idx, gj, gi] = 1 ## obj_mask의 best_iou_idx를 True로 설정.
+    noobj_mask[b, best_ious_idx, gj, gi] = 0 ## noobj_mask의 best_iou_idx를 False로 설정.
 
     # Set noobj mask to zero where iou exceeds ignore threshold
     for i, anchor_ious in enumerate(ious.t()):
-        noobj_mask[b[i], anchor_ious > ignore_thres, gj[i], gi[i]] = 0
+        noobj_mask[b[i], anchor_ious > ignore_thres, gj[i], gi[i]] = 0 ## anchor iou가 ignore_thres보다 높으면 객체가 존재하는 것이므로 noobj_mask를 False로 설정.
 
     # Coordinates
     tx[b, best_ious_idx, gj, gi] = gx - gx.floor()
@@ -101,4 +112,5 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     iou_scores[b, best_ious_idx, gj, gi] = bbox_iou(pred_boxes[b, best_ious_idx, gj, gi], target_boxes, x1y1x2y2=False)
 
     tconf = obj_mask.float()
+
     return iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf

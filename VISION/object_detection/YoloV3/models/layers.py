@@ -17,13 +17,29 @@ def conv_bn_relu_layer(in_channels, out_channels, kernel_size, stride=1, padding
 
     return layer
 
+def conv_bn_relu_block(in_channels, out_channels):
+    expanded_channels = out_channels * 2
+    modules = nn.Sequential(conv_bn_relu_layer(in_channels, out_channels, kernel_size=1, padding=0),
+                            conv_bn_relu_layer(out_channels, expanded_channels, kernel_size=3),
+                            conv_bn_relu_layer(expanded_channels, out_channels, kernel_size=1, padding=0),
+                            conv_bn_relu_layer(out_channels, expanded_channels, kernel_size=3),
+                            conv_bn_relu_layer(expanded_channels, out_channels, kernel_size=1, padding=0))
+    return modules
 
-def conv_bn_relu_block(in_channels):
+
+def residual_block(in_channels):
     middle_channel = in_channels // 2
     block = nn.Sequential(conv_bn_relu_layer(in_channels, middle_channel, kernel_size=1, padding=0, requires_grad=False),
                           conv_bn_relu_layer(middle_channel, in_channels, kernel_size=3, requires_grad=False))
     
     return block
+
+
+def conv_upsample(in_channels, out_channels, scale_factor):
+    modules = nn.Sequential(conv_bn_relu_layer(in_channels, out_channels, kernel_size=1, padding=0),
+                            nn.Upsample(scale_factor=scale_factor, mode="nearest"))
+    
+    return modules
 
 
 def conv_output_layer(in_channels, out_channels):
@@ -45,7 +61,7 @@ class DetectionLayer(nn.Module):
         self.bce = nn.BCELoss()
         self.ignore_threshold = 0.5
         self.obj_scale = 1
-        self.noobj_scale = 100
+        self.no_obj_scale = 100
         self.metrics = {}
 
     def forward(self, x, targets):
@@ -102,3 +118,47 @@ class DetectionLayer(nn.Module):
                                                                                                    anchors=scaled_anchors,
                                                                                                    ignore_thres=self.ignore_threshold,
                                                                                                    device=device)
+        
+        # Loss: Mask outputs to ignore non-existing objects (except with conf. loss)
+        loss_x = self.mse(cx[obj_mask], tx[obj_mask])
+        loss_y = self.mse(cy[obj_mask], ty[obj_mask])
+        loss_w = self.mse(w[obj_mask], tw[obj_mask])
+        loss_h = self.mse(h[obj_mask], th[obj_mask])
+        loss_bbox = loss_x + loss_y + loss_w + loss_h
+        loss_conf_obj = self.bce(pred_conf[obj_mask], tconf[obj_mask])
+        loss_conf_no_obj = self.bce(pred_conf[no_obj_mask], tconf[no_obj_mask])
+        loss_conf = self.obj_scale * loss_conf_obj + self.no_obj_scale * loss_conf_no_obj
+        loss_cls = self.bce(pred_cls[obj_mask], tcls[obj_mask])
+        loss_layer = loss_bbox + loss_conf + loss_cls
+
+        # Metrics
+        conf50 = (pred_conf > 0.5).float()
+        iou50 = (iou_scores > 0.5).float()
+        iou75 = (iou_scores > 0.75).float()
+        detected_mask = conf50 * class_mask * tconf
+        cls_acc = 100 * class_mask[obj_mask].mean()
+        conf_obj = pred_conf[obj_mask].mean()
+        conf_no_obj = pred_conf[no_obj_mask].mean()
+        precision = torch.sum(iou50 * detected_mask) / (conf50.sum() + 1e-16)
+        recall50 = torch.sum(iou50 * detected_mask) / (obj_mask.sum() + 1e-16)
+        recall75 = torch.sum(iou75 * detected_mask) / (obj_mask.sum() + 1e-16)
+
+        # Write loss and metrics
+        self.metrics = {
+            "loss_x": loss_x.detach().cpu().item(),
+            "loss_y": loss_y.detach().cpu().item(),
+            "loss_w": loss_w.detach().cpu().item(),
+            "loss_h": loss_h.detach().cpu().item(),
+            "loss_bbox": loss_bbox.detach().cpu().item(),
+            "loss_conf": loss_conf.detach().cpu().item(),
+            "loss_cls": loss_cls.detach().cpu().item(),
+            "loss_layer": loss_layer.detach().cpu().item(),
+            "cls_acc": cls_acc.detach().cpu().item(),
+            "conf_obj": conf_obj.detach().cpu().item(),
+            "conf_no_obj": conf_no_obj.detach().cpu().item(),
+            "precision": precision.detach().cpu().item(),
+            "recall50": recall50.detach().cpu().item(),
+            "recall75": recall75.detach().cpu().item()
+        }
+
+        return output, loss_layer

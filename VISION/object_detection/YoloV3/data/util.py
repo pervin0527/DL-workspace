@@ -62,11 +62,6 @@ def draw_boxes(image, boxes, class_idx, total_classes, name=None):
 
         label_str = f'{total_classes[int(label)]}'
         cv2.putText(image, label_str, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-
-    # plt.figure(figsize=(8, 8))
-    # plt.imshow(image)
-    # plt.axis('off')  # Hide axis
-    # plt.show()
         
     if name is None:
         name = "./sample.jpg"

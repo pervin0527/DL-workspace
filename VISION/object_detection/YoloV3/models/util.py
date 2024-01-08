@@ -1,4 +1,5 @@
 import torch
+from data.util import xywh2xyxy
 
 def bbox_wh_iou(wh1, wh2):
     wh2 = wh2.t()
@@ -30,9 +31,7 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
     inter_rect_y2 = torch.min(b1_y2, b2_y2)
 
     # Intersection area
-    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(
-        inter_rect_y2 - inter_rect_y1 + 1, min=0
-    )
+    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(inter_rect_y2 - inter_rect_y1 + 1, min=0)
 
     # Union Area
     b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
@@ -83,7 +82,7 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     _, best_ious_idx = ious.max(0) ## 가장 높은 iou를 계산.
 
     # Separate target values
-    b, target_labels = target[:, :2].long().t()
+    b, target_labels = target[:, :2].long().t() ## object가 포함된 이미지 idx, class_label
     gx, gy = gxy.t()
     gw, gh = gwh.t()
     gi, gj = gxy.long().t()
@@ -96,21 +95,70 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     for i, anchor_ious in enumerate(ious.t()):
         noobj_mask[b[i], anchor_ious > ignore_thres, gj[i], gi[i]] = 0 ## anchor iou가 ignore_thres보다 높으면 객체가 존재하는 것이므로 noobj_mask를 False로 설정.
 
+    """
+    ground-truth 박스를 이용해 offset을 계산한다.
+    """
     # Coordinates
-    tx[b, best_ious_idx, gj, gi] = gx - gx.floor()
+    tx[b, best_ious_idx, gj, gi] = gx - gx.floor() ## i, j번째 grid cell 내부에서 중심점이 몇 인지 계산 [0, 1]
     ty[b, best_ious_idx, gj, gi] = gy - gy.floor()
 
     # Width and height
-    tw[b, best_ious_idx, gj, gi] = torch.log(gw / anchors[best_ious_idx][:, 0] + 1e-16)
+    tw[b, best_ious_idx, gj, gi] = torch.log(gw / anchors[best_ious_idx][:, 0] + 1e-16) ## 박스의 width, height
     th[b, best_ious_idx, gj, gi] = torch.log(gh / anchors[best_ious_idx][:, 1] + 1e-16)
 
     # One-hot encoding of label
-    tcls[b, best_ious_idx, gj, gi, target_labels] = 1
+    tcls[b, best_ious_idx, gj, gi, target_labels] = 1 ## i, j번째 grid cell에 있는 객체의 클래스
 
     # Compute label correctness and iou at best anchor
-    class_mask[b, best_ious_idx, gj, gi] = (pred_cls[b, best_ious_idx, gj, gi].argmax(-1) == target_labels).float()
-    iou_scores[b, best_ious_idx, gj, gi] = bbox_iou(pred_boxes[b, best_ious_idx, gj, gi], target_boxes, x1y1x2y2=False)
+    class_mask[b, best_ious_idx, gj, gi] = (pred_cls[b, best_ious_idx, gj, gi].argmax(-1) == target_labels).float() ## 올바른 클래스를 예측했는지 마스크에 체크. 맞췄으면 1, 틀렸으면 0
+    iou_scores[b, best_ious_idx, gj, gi] = bbox_iou(pred_boxes[b, best_ious_idx, gj, gi], target_boxes, x1y1x2y2=False) ## pred box와 target box 간 Iou.
 
     tconf = obj_mask.float()
 
     return iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf
+
+
+def non_max_suppression(prediction, img_height, img_width, conf_thres, nms_thres):
+    """
+    Removes detections with lower object confidence score than 'conf_thres' and performs
+    Non-Maximum Suppression to further filter detections.
+    Returns detections with shape:
+        (x1, y1, x2, y2, object_conf, class_score, class_pred)
+    """
+
+    # (cx, cy, w, h) -> (x1, y1, x2, y2)
+    prediction[..., :4] = xywh2xyxy(prediction[..., :4], img_height=img_height, img_width=img_width)
+    output = [None for _ in range(len(prediction))]
+
+    for image_i, image_pred in enumerate(prediction):
+        # Filter out confidence scores below threshold
+        image_pred = image_pred[image_pred[:, 4] >= conf_thres]
+
+        # If none are remaining => process next image
+        if not image_pred.size(0):
+            continue
+
+        # Object confidence times class confidence
+        score = image_pred[:, 4] * image_pred[:, 5:].max(1)[0]
+
+        # Sort by it
+        image_pred = image_pred[(-score).argsort()]
+        class_confs, class_preds = image_pred[:, 5:].max(1, keepdim=True)
+        detections = torch.cat((image_pred[:, :5], class_confs.float(), class_preds.float()), 1)
+
+        # Perform non-maximum suppression
+        keep_boxes = []
+        while detections.size(0):
+            large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres
+            label_match = detections[0, -1] == detections[:, -1]
+            # Indices of boxes with lower confidence scores, large IOUs and matching labels
+            invalid = large_overlap & label_match
+            weights = detections[invalid, 4:5]
+            # Merge overlapping bboxes by order of confidence
+            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()
+            keep_boxes += [detections[0]]
+            detections = detections[~invalid]
+        if keep_boxes:
+            output[image_i] = torch.stack(keep_boxes)
+
+    return output

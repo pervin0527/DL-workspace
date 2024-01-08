@@ -11,7 +11,7 @@ from data.util import resize_image_and_boxes
 
 
 class YoloDataset(Dataset):
-    def __init__(self, file_list_path, img_size, augment, multiscale=True):
+    def __init__(self, file_list_path, img_size, augment=None, multiscale=True):
         self.batch_count = 0
         self.max_objects = 100
         self.img_size = img_size

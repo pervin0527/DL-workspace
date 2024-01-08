@@ -34,6 +34,8 @@ class YoloDataset(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         annot_path = self.label_files[idx].rstrip()
+        targets = torch.zeros((0, 6))  # 빈 targets 텐서 초기화
+
         if os.path.exists(annot_path):
             annot = np.loadtxt(annot_path).reshape(-1, 5)
             if annot.size > 0:
@@ -58,14 +60,15 @@ class YoloDataset(Dataset):
                 else:
                     boxes = np.concatenate((class_ids, boxes), axis=1)
 
-            else:
-                # 객체가 없는 경우 빈 boxes 배열 처리
-                boxes = np.zeros((0, 5))
+                targets = torch.zeros((len(boxes), 6))
+                targets[:, 1:] = torch.from_numpy(boxes)
+        # 파일이 존재하지 않거나 빈 파일인 경우 targets는 빈 텐서로 유지.
 
-            targets = torch.zeros((len(boxes), 6))
-            targets[:, 1:] = torch.from_numpy(boxes)
-        
-        return img_path, torch.tensor(image, dtype=torch.float32,), targets
+        # 이미지를 텐서로 변환
+        image_tensor = torch.tensor(image, dtype=torch.float32)
+
+        return img_path, image_tensor, targets
+
     
 
     def collate_fn(self, batch):
@@ -83,7 +86,7 @@ class YoloDataset(Dataset):
                 # 이미지와 바운딩 박스 크기 조정
                 image, boxes = resize_image_and_boxes(image.numpy(), target[:, 2:], new_size=self.img_size)
                 image = np.transpose(image, axes=(2, 0, 1))
-                resized_images.append(torch.from_numpy(image))
+                resized_images.append(torch.from_numpy(image) / 255)
 
                 # 타겟에 배치 인덱스 추가
                 target[:, 0] = i  # 첫 번째 열에 배치 인덱스 할당
@@ -93,7 +96,7 @@ class YoloDataset(Dataset):
                 # 이미지만 크기 조정 (타겟이 없는 경우)
                 image = resize_image_and_boxes(image, None, new_size=self.img_size)[0]
                 image = np.transpose(image, axes=(2, 0, 1))
-                resized_images.append(torch.from_numpy(image))
+                resized_images.append(torch.from_numpy(image) / 255)
 
         # 타겟 텐서 생성
         if len(resized_targets) > 0:

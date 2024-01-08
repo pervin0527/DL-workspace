@@ -4,3 +4,4 @@ kowiki*
 .DS_Store
 .vscode/
 darknet19_448.weights
+weights/

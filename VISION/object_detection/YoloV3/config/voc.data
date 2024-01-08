@@ -1,0 +1,4 @@
+classes=20
+train=/home/pervinco/Desktop/yolov3-pytorch/data/train.txt
+valid=/home/pervinco/Desktop/yolov3-pytorch/data/2007_test.txt
+names=/home/pervinco/Desktop/yolov3-pytorch/data/voc_classes.txt

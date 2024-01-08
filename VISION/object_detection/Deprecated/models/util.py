@@ -118,7 +118,7 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres, device):
     return iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf
 
 
-def non_max_suppression(prediction, img_height, img_width, conf_thres, nms_thres):
+def non_max_suppression(prediction, conf_thres, nms_thres, img_size):
     """
     Removes detections with lower object confidence score than 'conf_thres' and performs
     Non-Maximum Suppression to further filter detections.
@@ -127,7 +127,7 @@ def non_max_suppression(prediction, img_height, img_width, conf_thres, nms_thres
     """
 
     # (cx, cy, w, h) -> (x1, y1, x2, y2)
-    prediction[..., :4] = xywh2xyxy(prediction[..., :4], img_height=img_height, img_width=img_width)
+    prediction[..., :4] = xywh2xyxy(prediction[..., :4], img_size, img_size)
     output = [None for _ in range(len(prediction))]
 
     for image_i, image_pred in enumerate(prediction):
@@ -146,18 +146,27 @@ def non_max_suppression(prediction, img_height, img_width, conf_thres, nms_thres
         class_confs, class_preds = image_pred[:, 5:].max(1, keepdim=True)
         detections = torch.cat((image_pred[:, :5], class_confs.float(), class_preds.float()), 1)
 
-        # Perform non-maximum suppression
         keep_boxes = []
         while detections.size(0):
             large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres
             label_match = detections[0, -1] == detections[:, -1]
+            
             # Indices of boxes with lower confidence scores, large IOUs and matching labels
             invalid = large_overlap & label_match
             weights = detections[invalid, 4:5]
+            
             # Merge overlapping bboxes by order of confidence
+            if weights.sum() == 0:  # Avoid division by zero
+                break
             detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()
             keep_boxes += [detections[0]]
+            
+            # Select boxes that are not invalid
             detections = detections[~invalid]
+            # Also, if no boxes remain, break the loop
+            if detections.size(0) == 0:
+                break
+
         if keep_boxes:
             output[image_i] = torch.stack(keep_boxes)
 

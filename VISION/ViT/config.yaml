@@ -1,0 +1,18 @@
+dataset: cifar100 # ["cifar10", "cifar100"]
+model_type: ViT-H_14 # ["ViT-B_16", "ViT-B_32", "ViT-L_16", "ViT-L_32", "ViT-H_14"]
+pretrained: "/home/pervinco/Models/checkpoint/imagenet21k/ViT-H_14.npz"
+save_dir: "/home/pervinco/Models/ViT"
+
+epochs: 100 # num_steps
+img_size: 224
+train_batch_size: 32
+valid_batch_size: 16
+
+learning_rate: 0.003
+weight_decay: 0
+decay_type: "cosine" # ["cosine", "linear"]
+warmup_steps: 500 ## need to fix steps -> epoch
+max_grad_norm: 1.0
+
+seed: 42
+gradient_accumulation_steps: 1

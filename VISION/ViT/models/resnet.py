@@ -7,7 +7,9 @@ from torch import nn
 from torch.nn import functional as F
 
 def np2th(weights, conv=False):
-    """Possibly convert HWIO to OIHW."""
+    """
+    [height, width, input_channel, output_channel] -> [output_channel, input_channel, height, width]
+    """
     if conv:
         weights = weights.transpose([3, 2, 0, 1])
     
@@ -21,7 +23,8 @@ def conv1x1(cin, cout, stride=1, bias=False):
     return StdConv2d(cin, cout, kernel_size=1, stride=stride, padding=0, bias=bias)
 
 class PreActBottleneck(nn.Module):
-    """Pre-activation (v2) bottleneck block.
+    """
+    Pre-activation (v2) bottleneck block.
     """
 
     def __init__(self, cin, cout=None, cmid=None, stride=1):

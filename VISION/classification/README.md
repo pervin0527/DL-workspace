@@ -9,3 +9,4 @@
 - MobileNetV1 : [Paper](https://arxiv.org/pdf/1704.04861.pdf) [Blog](https://www.notion.so/pervin0527/MobileNetV1-Efficient-Convolutional-Neural-Networks-for-Mobile-Vision-Applications-e119194461844079ad5b08732d1d2fe7)
 - MobileNetV2 : [Paper](https://arxiv.org/pdf/1801.04381.pdf) [Blog](https://www.notion.so/pervin0527/MobileNetV2-Inverted-Residuals-and-Linear-Bottlenecks-40da4063ea724dafb12d3554c55d9f2f)
 - EfficientNet : [Paper](https://arxiv.org/pdf/1905.11946.pdf) [Blog](https://www.notion.so/pervin0527/EfficientNet-Rethinking-Model-Scaling-for-Convolutional-Neural-Networks-1fc2e897eb9d43478e78c6a8e8582323)
+
